@@ -15,6 +15,11 @@ struct StatusMenuView: View {
                     overlayState.applyOverlayState()
                 }
 
+            Toggle("Toolbox", isOn: $overlayState.toolboxVisible)
+                .onChange(of: overlayState.toolboxVisible) { newValue in
+                    overlayState.setToolboxVisible(newValue)
+                }
+
             Divider()
 
             Picker("Tool", selection: $overlayState.selectedTool) {
@@ -22,8 +27,10 @@ struct StatusMenuView: View {
                 Text("Eraser").tag(OverlayState.Tool.eraser)
                 Divider()
                 Text("Rectangle").tag(OverlayState.Tool.rectangle)
+                Text("Rounded Rect").tag(OverlayState.Tool.roundedRectangle)
                 Text("Ellipse").tag(OverlayState.Tool.ellipse)
                 Text("Arrow").tag(OverlayState.Tool.arrow)
+                Text("Curved Arrow").tag(OverlayState.Tool.curvedArrow)
             }
             .pickerStyle(.menu)
             .onChange(of: overlayState.selectedTool) { _ in

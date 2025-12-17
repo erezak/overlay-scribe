@@ -68,6 +68,7 @@ If you want logs in your terminal instead of launching via Finder, run the binar
 - Shapes: Rectangle, ellipse, and arrow tools draw basic outlined shapes.
 - Undo/Redo/Clear: Operate on the overlay contents.
 - Color + Width: Adjust pen stroke appearance.
+- Toolbox: Optional floating panel for faster tool/style switching.
 
 ### Keyboard shortcuts
 
@@ -77,6 +78,7 @@ Defaults (system-wide, via Carbon hotkeys):
 - Toggle ink mode: Ctrl+Shift+I
 - Undo: Ctrl+Shift+Z
 - Clear: Ctrl+Shift+X
+- Toggle toolbox: Ctrl+Shift+T
 
 When the app is active: Escape exits ink mode.
 

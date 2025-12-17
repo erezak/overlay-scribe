@@ -9,13 +9,21 @@ final class OverlayWindowManager {
     private var color: NSColor = .systemRed
     private var inkModeEnabled: Bool = false
 
+    private var shapeFillEnabled: Bool = true
+    private var shapeFillColor: NSColor = NSColor.systemGreen.withAlphaComponent(0.35)
+    private var shapeHatchEnabled: Bool = false
+    private var shapeCornerRadius: CGFloat = 18
+
     init() {
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.reconcileScreens()
+            guard let self else { return }
+            Task { @MainActor in
+                self.reconcileScreens()
+            }
         }
     }
 
@@ -64,6 +72,34 @@ final class OverlayWindowManager {
         }
     }
 
+    func setShapeFillEnabled(_ enabled: Bool) {
+        shapeFillEnabled = enabled
+        for controller in controllersByScreenId.values {
+            controller.setShapeFillEnabled(enabled)
+        }
+    }
+
+    func setShapeFillColor(_ color: NSColor) {
+        shapeFillColor = color
+        for controller in controllersByScreenId.values {
+            controller.setShapeFillColor(color)
+        }
+    }
+
+    func setShapeHatchEnabled(_ enabled: Bool) {
+        shapeHatchEnabled = enabled
+        for controller in controllersByScreenId.values {
+            controller.setShapeHatchEnabled(enabled)
+        }
+    }
+
+    func setShapeCornerRadius(_ radius: CGFloat) {
+        shapeCornerRadius = radius
+        for controller in controllersByScreenId.values {
+            controller.setShapeCornerRadius(radius)
+        }
+    }
+
     func clearAll() {
         for controller in controllersByScreenId.values {
             controller.clearAll()
@@ -88,6 +124,10 @@ final class OverlayWindowManager {
             controller.setTool(tool)
             controller.setPenWidth(penWidth)
             controller.setColor(color)
+            controller.setShapeFillEnabled(shapeFillEnabled)
+            controller.setShapeFillColor(shapeFillColor)
+            controller.setShapeHatchEnabled(shapeHatchEnabled)
+            controller.setShapeCornerRadius(shapeCornerRadius)
         }
     }
 
@@ -189,6 +229,22 @@ private final class OverlayWindowController {
 
     func setColor(_ color: NSColor) {
         canvasView.penColor = color
+    }
+
+    func setShapeFillEnabled(_ enabled: Bool) {
+        canvasView.shapeFillEnabled = enabled
+    }
+
+    func setShapeFillColor(_ color: NSColor) {
+        canvasView.shapeFillColor = color
+    }
+
+    func setShapeHatchEnabled(_ enabled: Bool) {
+        canvasView.shapeHatchEnabled = enabled
+    }
+
+    func setShapeCornerRadius(_ radius: CGFloat) {
+        canvasView.shapeCornerRadius = radius
     }
 
     func clearAll() {

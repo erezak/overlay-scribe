@@ -7,6 +7,7 @@ final class HotkeyManager {
     var onExitInkMode: (() -> Void)?
     var onUndo: (() -> Void)?
     var onClear: (() -> Void)?
+    var onToggleToolbox: (() -> Void)?
 
     private var hotKeys: [EventHotKeyRef?] = []
     private var handlerRef: EventHandlerRef?
@@ -23,6 +24,7 @@ final class HotkeyManager {
         //  - Toggle mode:   Ctrl+Shift+I
         //  - Undo:          Ctrl+Shift+Z
         //  - Clear:         Ctrl+Shift+X
+        //  - Toolbox:       Ctrl+Shift+T
         let signature = OSType(fourCharCode("OSCR"))
 
         var eventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
@@ -57,6 +59,7 @@ final class HotkeyManager {
         hotKeys.append(registerHotKey(signature: signature, id: 2, keyCode: UInt32(kVK_ANSI_I), modifiers: defaultModifiers))
         hotKeys.append(registerHotKey(signature: signature, id: 3, keyCode: UInt32(kVK_ANSI_Z), modifiers: defaultModifiers))
         hotKeys.append(registerHotKey(signature: signature, id: 4, keyCode: UInt32(kVK_ANSI_X), modifiers: defaultModifiers))
+        hotKeys.append(registerHotKey(signature: signature, id: 5, keyCode: UInt32(kVK_ANSI_T), modifiers: defaultModifiers))
     }
 
     private func registerHotKey(signature: OSType, id: UInt32, keyCode: UInt32, modifiers: UInt32) -> EventHotKeyRef? {
@@ -79,6 +82,8 @@ final class HotkeyManager {
             onUndo?()
         case 4:
             onClear?()
+        case 5:
+            onToggleToolbox?()
         default:
             break
         }
