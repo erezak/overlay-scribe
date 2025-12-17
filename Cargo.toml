@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "core/overlay_scribe_core",
+  "core/overlay_scribe_ffi",
+]
+resolver = "2"

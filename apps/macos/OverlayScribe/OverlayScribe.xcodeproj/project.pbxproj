@@ -1,0 +1,230 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A1A0000E2B00000100000001 /* OverlayScribeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A000052B00000100000001 /* OverlayScribeApp.swift */; };
+		A1A0000F2B00000100000001 /* StatusMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A000062B00000100000001 /* StatusMenuView.swift */; };
+		A1A000102B00000100000001 /* OverlayState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A000072B00000100000001 /* OverlayState.swift */; };
+		A1A000112B00000100000001 /* OverlayWindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A000082B00000100000001 /* OverlayWindowManager.swift */; };
+		A1A000122B00000100000001 /* CanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A000092B00000100000001 /* CanvasView.swift */; };
+		A1A000132B00000100000001 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A0000A2B00000100000001 /* HotkeyManager.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A1A000012B00000100000001 /* OverlayScribe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OverlayScribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1A000042B00000100000001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1A000052B00000100000001 /* OverlayScribeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayScribeApp.swift; sourceTree = "<group>"; };
+		A1A000062B00000100000001 /* StatusMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusMenuView.swift; sourceTree = "<group>"; };
+		A1A000072B00000100000001 /* OverlayState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayState.swift; sourceTree = "<group>"; };
+		A1A000082B00000100000001 /* OverlayWindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindowManager.swift; sourceTree = "<group>"; };
+		A1A000092B00000100000001 /* CanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasView.swift; sourceTree = "<group>"; };
+		A1A0000A2B00000100000001 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A1A0000B2B00000100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A1A000022B00000100000001 = {
+			isa = PBXGroup;
+			children = (
+				A1A000032B00000100000001 /* OverlayScribe */,
+				A1A0001F2B00000100000001 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A1A000032B00000100000001 /* OverlayScribe */ = {
+			isa = PBXGroup;
+			children = (
+				A1A000042B00000100000001 /* Info.plist */,
+				A1A000052B00000100000001 /* OverlayScribeApp.swift */,
+				A1A000062B00000100000001 /* StatusMenuView.swift */,
+				A1A000072B00000100000001 /* OverlayState.swift */,
+				A1A000082B00000100000001 /* OverlayWindowManager.swift */,
+				A1A000092B00000100000001 /* CanvasView.swift */,
+				A1A0000A2B00000100000001 /* HotkeyManager.swift */,
+			);
+			path = OverlayScribe;
+			sourceTree = "<group>";
+		};
+		A1A0001F2B00000100000001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A1A000012B00000100000001 /* OverlayScribe.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A1A000142B00000100000001 /* OverlayScribe */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1A0001A2B00000100000001 /* Build configuration list for PBXNativeTarget "OverlayScribe" */;
+			buildPhases = (
+				A1A000152B00000100000001 /* Sources */,
+				A1A0000B2B00000100000001 /* Frameworks */,
+				A1A000162B00000100000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OverlayScribe;
+			productName = OverlayScribe;
+			productReference = A1A000012B00000100000001 /* OverlayScribe.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A1A000172B00000100000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					A1A000142B00000100000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = A1A0001D2B00000100000001 /* Build configuration list for PBXProject "OverlayScribe" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A1A000022B00000100000001;
+			productRefGroup = A1A0001F2B00000100000001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A1A000142B00000100000001 /* OverlayScribe */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A1A000162B00000100000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A1A000152B00000100000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1A0000E2B00000100000001 /* OverlayScribeApp.swift in Sources */,
+				A1A0000F2B00000100000001 /* StatusMenuView.swift in Sources */,
+				A1A000102B00000100000001 /* OverlayState.swift in Sources */,
+				A1A000112B00000100000001 /* OverlayWindowManager.swift in Sources */,
+				A1A000122B00000100000001 /* CanvasView.swift in Sources */,
+				A1A000132B00000100000001 /* HotkeyManager.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A1A0001B2B00000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				DEAD_CODE_STRIPPING = NO;
+				ENABLE_HARDENED_RUNTIME = NO;
+				INFOPLIST_FILE = OverlayScribe/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.OverlayScribe;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A1A0001C2B00000100000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_IDENTITY = "";
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
+				INFOPLIST_FILE = OverlayScribe/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.OverlayScribe;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A1A0001E2B00000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			};
+			name = Debug;
+		};
+		A1A0001F2B00000100000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1A0001A2B00000100000001 /* Build configuration list for PBXNativeTarget "OverlayScribe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1A0001B2B00000100000001 /* Debug */,
+				A1A0001C2B00000100000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A1A0001D2B00000100000001 /* Build configuration list for PBXProject "OverlayScribe" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A1A0001E2B00000100000001 /* Debug */,
+				A1A0001F2B00000100000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A1A000172B00000100000001 /* Project object */;
+}

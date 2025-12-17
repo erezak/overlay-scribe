@@ -1,0 +1,15 @@
+.DS_Store
+.swiftpm/
+.build/
+DerivedData/
+.derived-data/
+
+target/
+
+**/*.xcuserstate
+**/*.xccheckout
+**/*.xcscmblueprint
+**/xcuserdata/
+**/*.xcworkspace/
+
+apps/macos/OverlayScribe/Generated/
