@@ -146,7 +146,7 @@ private final class ToolboxPanelController {
             self.hosting = hosting
 
             let panel = NSPanel(
-                contentRect: NSRect(x: 80, y: 80, width: 320, height: 220),
+                contentRect: NSRect(x: 80, y: 80, width: 460, height: 270),
                 styleMask: [.titled, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
@@ -184,34 +184,68 @@ private final class ToolboxPanelController {
 private struct ToolboxView: View {
     @EnvironmentObject private var overlayState: OverlayState
 
-    private var toolButtons: [(String, OverlayState.Tool)] {
+    private struct ToolButton: Identifiable {
+        let id = UUID()
+        let label: String
+        let symbol: String
+        let tool: OverlayState.Tool
+    }
+
+    private var toolButtons: [ToolButton] {
         [
-            ("Pen", .pen),
-            ("Eraser", .eraser),
-            ("Rect", .rectangle),
-            ("Round", .roundedRectangle),
-            ("Ellipse", .ellipse),
-            ("Arrow", .arrow),
-            ("Curve", .curvedArrow),
+            .init(label: "Pen", symbol: "pencil", tool: .pen),
+            .init(label: "Eraser", symbol: "eraser", tool: .eraser),
+            .init(label: "Rect", symbol: "rectangle", tool: .rectangle),
+            .init(label: "Rounded", symbol: "rectangle.roundedtop", tool: .roundedRectangle),
+            .init(label: "Ellipse", symbol: "circle", tool: .ellipse),
+            .init(label: "Arrow", symbol: "arrow.right", tool: .arrow),
+            .init(label: "Curved", symbol: "arrow.triangle.turn.up.right.diamond", tool: .curvedArrow),
         ]
+    }
+
+    private func toolLabel(_ button: ToolButton) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: button.symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 16)
+            Text(button.label)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(overlayState.selectedTool == button.tool ? Color.accentColor.opacity(0.22) : Color.clear)
+        )
+    }
+
+    private func fillOptionLabel(title: String, dotColor: NSColor) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color(nsColor: dotColor))
+                .frame(width: 10, height: 10)
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.25), lineWidth: 1))
+            Text(title)
+        }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                ForEach(toolButtons, id: \.0) { label, tool in
+            let columns: [GridItem] = [
+                GridItem(.flexible(minimum: 120), spacing: 8),
+                GridItem(.flexible(minimum: 120), spacing: 8),
+                GridItem(.flexible(minimum: 120), spacing: 8),
+            ]
+
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(toolButtons) { button in
                     Button {
-                        overlayState.selectedTool = tool
+                        overlayState.selectedTool = button.tool
                         overlayState.applyOverlayState()
                     } label: {
-                        Text(label)
-                            .font(.system(size: 12, weight: .semibold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(overlayState.selectedTool == tool ? Color.accentColor.opacity(0.22) : Color.clear)
-                            )
+                        toolLabel(button)
                     }
                     .buttonStyle(.plain)
                 }
@@ -269,23 +303,26 @@ private struct ToolboxView: View {
                     overlayState.shapeFillColor = NSColor.systemGreen.withAlphaComponent(0.35)
                     overlayState.applyOverlayState()
                 } label: {
-                    Label("Green", systemImage: "circle.fill")
-                        .labelStyle(.titleAndIcon)
+                    fillOptionLabel(title: "Green", dotColor: .systemGreen)
                 }
                 .buttonStyle(.plain)
                 Button {
                     overlayState.shapeFillColor = NSColor.systemYellow.withAlphaComponent(0.45)
                     overlayState.applyOverlayState()
                 } label: {
-                    Label("Yellow", systemImage: "circle.fill")
-                        .labelStyle(.titleAndIcon)
+                    fillOptionLabel(title: "Yellow", dotColor: .systemYellow)
                 }
                 .buttonStyle(.plain)
                 Button {
                     overlayState.shapeFillColor = NSColor.clear
                     overlayState.applyOverlayState()
                 } label: {
-                    Text("None")
+                    HStack(spacing: 6) {
+                        Image(systemName: "circle.slash")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                        Text("None")
+                    }
                 }
                 .buttonStyle(.plain)
             }
@@ -301,6 +338,6 @@ private struct ToolboxView: View {
             .buttonStyle(.bordered)
         }
         .padding(12)
-        .frame(minWidth: 320)
+        .frame(minWidth: 460)
     }
 }
