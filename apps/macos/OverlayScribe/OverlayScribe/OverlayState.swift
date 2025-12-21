@@ -20,7 +20,7 @@ final class OverlayState: ObservableObject {
         let color: NSColor
     }
 
-    @Published var overlayEnabled: Bool = false
+    @Published var overlayEnabled: Bool = true
     @Published var inkModeEnabled: Bool = false
     // When true, the overlay is fully click-through to apps behind it.
     // When false, shapes can intercept clicks (for selection/text editing).
@@ -75,6 +75,9 @@ final class OverlayState: ObservableObject {
         }
 
         hotkeyManager.start()
+
+        // Ensure the initial published values take effect immediately at launch.
+        applyOverlayState()
     }
 
     func toggleOverlay() {

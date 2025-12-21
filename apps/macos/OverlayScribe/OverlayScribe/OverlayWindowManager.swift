@@ -15,6 +15,8 @@ final class OverlayWindowManager {
     private var shapeHatchEnabled: Bool = false
     private var shapeCornerRadius: CGFloat = 18
 
+    private var mouseMonitor: Any?
+
     init() {
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -34,12 +36,14 @@ final class OverlayWindowManager {
             controller.show()
         }
         applyCurrentStateToAll()
+        installMouseMonitorIfNeeded()
     }
 
     func hideOverlays() {
         for controller in controllersByScreenId.values {
             controller.hide()
         }
+        removeMouseMonitorIfNeeded()
     }
 
     func setInkModeEnabled(_ enabled: Bool) {
@@ -50,6 +54,7 @@ final class OverlayWindowManager {
         if enabled {
             NSApp.activate(ignoringOtherApps: true)
         }
+        updateMousePassthroughPolicies()
     }
 
     func setClickthroughEnabled(_ enabled: Bool) {
@@ -57,6 +62,7 @@ final class OverlayWindowManager {
         for controller in controllersByScreenId.values {
             controller.setClickthroughEnabled(enabled)
         }
+        updateMousePassthroughPolicies()
     }
 
     func setTool(_ tool: OverlayState.Tool) {
@@ -157,6 +163,33 @@ final class OverlayWindowManager {
                 controllersByScreenId[id]?.updateFrame(for: screen)
             }
         }
+
+        updateMousePassthroughPolicies()
+    }
+
+    private func installMouseMonitorIfNeeded() {
+        guard mouseMonitor == nil else { return }
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.updateMousePassthroughPolicies()
+            }
+        }
+    }
+
+    private func removeMouseMonitorIfNeeded() {
+        if let mouseMonitor {
+            NSEvent.removeMonitor(mouseMonitor)
+            self.mouseMonitor = nil
+        }
+    }
+
+    private func updateMousePassthroughPolicies() {
+        // NSEvent.mouseLocation is in global screen coords.
+        let global = NSEvent.mouseLocation
+        for controller in controllersByScreenId.values {
+            controller.updateMousePassthrough(globalMouseLocation: global)
+        }
     }
 
     private func screenId(for screen: NSScreen) -> String {
@@ -232,7 +265,7 @@ private final class OverlayWindowController {
 
     func setInkModeEnabled(_ enabled: Bool) {
         inkModeEnabled = enabled
-        applyMousePolicy()
+        applyMousePolicy(globalMouseLocation: NSEvent.mouseLocation)
         if enabled {
             window.makeKeyAndOrderFront(nil)
         }
@@ -240,15 +273,40 @@ private final class OverlayWindowController {
 
     func setClickthroughEnabled(_ enabled: Bool) {
         clickthroughEnabled = enabled
-        applyMousePolicy()
+        applyMousePolicy(globalMouseLocation: NSEvent.mouseLocation)
     }
 
-    private func applyMousePolicy() {
-        // Ink mode always captures input for drawing.
-        // Otherwise, click-through is controlled by the clickthroughEnabled flag.
-        window.ignoresMouseEvents = (!inkModeEnabled && clickthroughEnabled)
+    func updateMousePassthrough(globalMouseLocation: NSPoint) {
+        applyMousePolicy(globalMouseLocation: globalMouseLocation)
+    }
+
+    private func applyMousePolicy(globalMouseLocation: NSPoint) {
         canvasView.inkModeEnabled = inkModeEnabled
         canvasView.clickthroughEnabled = clickthroughEnabled
+
+        // In ink mode, always capture input for drawing.
+        if inkModeEnabled {
+            window.ignoresMouseEvents = false
+            return
+        }
+
+        // If click-through is enabled, everything passes through (including ink/shapes).
+        if clickthroughEnabled {
+            window.ignoresMouseEvents = true
+            return
+        }
+
+        // clickthroughEnabled == false:
+        // Let clicks pass through unless the pointer is over ink or inside a closed shape.
+        guard window.frame.contains(globalMouseLocation) else {
+            window.ignoresMouseEvents = true
+            return
+        }
+
+        let windowPoint = window.convertPoint(fromScreen: globalMouseLocation)
+        let viewPoint = canvasView.convert(windowPoint, from: nil)
+        let shouldBlock = canvasView.blocksMouse(at: viewPoint)
+        window.ignoresMouseEvents = !shouldBlock
     }
 
     func setTool(_ tool: OverlayState.Tool) {

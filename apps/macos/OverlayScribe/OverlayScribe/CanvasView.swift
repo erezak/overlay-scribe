@@ -50,25 +50,13 @@ final class CanvasView: NSView, NSTextViewDelegate {
     override var isOpaque: Bool { false }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        if inkModeEnabled {
-            return super.hitTest(point)
-        }
-
-        // If fully click-through, never intercept.
-        if clickthroughEnabled {
-            return nil
-        }
-
-        // Allow interactive subviews (e.g. text editor, alignment HUD) to receive clicks.
+        // Window-level click-through/passthrough is handled by the overlay window controller
+        // (toggling ignoresMouseEvents based on pointer location). Here we just ensure our
+        // interactive subviews can receive clicks when the window is accepting events.
         if let hit = super.hitTest(point), hit !== self {
             return hit
         }
-
-        // Not ink mode, not click-through: only intercept clicks on (or inside) shapes.
-        if hitTestShape(at: point) != nil {
-            return self
-        }
-        return nil
+        return self
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
@@ -552,9 +540,102 @@ final class CanvasView: NSView, NSTextViewDelegate {
 
         // Ensure the overlay can actually accept key events while editing.
         NSApp.activate(ignoringOtherApps: true)
+        window?.ignoresMouseEvents = false
         window?.makeKeyAndOrderFront(nil)
         window?.makeFirstResponder(textView)
         setNeedsDisplay(bounds)
+    }
+
+    // MARK: - Passthrough hit-testing
+
+    func blocksMouse(at point: CGPoint) -> Bool {
+        if inkModeEnabled {
+            // In ink mode we need to capture input for drawing.
+            return true
+        }
+        if clickthroughEnabled {
+            // Explicitly allow clicks through ink/shapes.
+            return false
+        }
+
+        // While editing, keep the window interactive.
+        if textEditor != nil {
+            return true
+        }
+
+        // Block clicks when pointer is inside a closed shape.
+        if let hit = hitTestClosedShape(at: point) {
+            _ = hit // keep intent explicit
+            return true
+        }
+
+        // Block clicks when pointer is on top of ink.
+        if hitTestInk(at: point) {
+            return true
+        }
+
+        return false
+    }
+
+    private func hitTestClosedShape(at point: CGPoint) -> ShapeHit? {
+        for item in cachedItems.reversed() {
+            guard case .shape(let shape) = item else { continue }
+            let closed = isClosedShape(shape.kind)
+            guard closed else { continue }
+            let (rect, path) = shapePathAndRect(for: shape)
+            if let path, path.contains(point) {
+                return ShapeHit(shape: shape, rect: rect, path: path, isClosed: true)
+            }
+        }
+        return nil
+    }
+
+    private func hitTestInk(at point: CGPoint) -> Bool {
+        for item in cachedItems.reversed() {
+            guard case .stroke(let stroke) = item else { continue }
+            if strokeContainsPoint(stroke, point: point) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func strokeContainsPoint(_ stroke: FfiStroke, point: CGPoint) -> Bool {
+        let pts = stroke.points.map { $0.asCGPoint() }
+        guard !pts.isEmpty else { return false }
+        if pts.count == 1 {
+            let dx = point.x - pts[0].x
+            let dy = point.y - pts[0].y
+            let r = max(6, CGFloat(stroke.width) * 0.6)
+            return (dx * dx + dy * dy) <= (r * r)
+        }
+
+        let r = max(6, CGFloat(stroke.width) * 0.6)
+        let r2 = r * r
+        for i in 0..<(pts.count - 1) {
+            if distanceSquaredPointToSegment(point, a: pts[i], b: pts[i + 1]) <= r2 {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func distanceSquaredPointToSegment(_ p: CGPoint, a: CGPoint, b: CGPoint) -> CGFloat {
+        let abx = b.x - a.x
+        let aby = b.y - a.y
+        let apx = p.x - a.x
+        let apy = p.y - a.y
+        let abLen2 = abx * abx + aby * aby
+        if abLen2 <= 0.0001 {
+            return apx * apx + apy * apy
+        }
+        var t = (apx * abx + apy * aby) / abLen2
+        t = min(1, max(0, t))
+        let cx = a.x + t * abx
+        let cy = a.y + t * aby
+        let dx = p.x - cx
+        let dy = p.y - cy
+        return dx * dx + dy * dy
     }
 
     private func commitTextEditingIfNeeded() -> Bool {
