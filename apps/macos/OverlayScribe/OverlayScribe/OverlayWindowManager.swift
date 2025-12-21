@@ -8,6 +8,7 @@ final class OverlayWindowManager {
     private var penWidth: CGFloat = 4
     private var color: NSColor = .systemRed
     private var inkModeEnabled: Bool = false
+    private var clickthroughEnabled: Bool = false
 
     private var shapeFillEnabled: Bool = true
     private var shapeFillColor: NSColor = NSColor.systemGreen.withAlphaComponent(0.35)
@@ -48,6 +49,13 @@ final class OverlayWindowManager {
         }
         if enabled {
             NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    func setClickthroughEnabled(_ enabled: Bool) {
+        clickthroughEnabled = enabled
+        for controller in controllersByScreenId.values {
+            controller.setClickthroughEnabled(enabled)
         }
     }
 
@@ -121,6 +129,7 @@ final class OverlayWindowManager {
     private func applyCurrentStateToAll() {
         for controller in controllersByScreenId.values {
             controller.setInkModeEnabled(inkModeEnabled)
+            controller.setClickthroughEnabled(clickthroughEnabled)
             controller.setTool(tool)
             controller.setPenWidth(penWidth)
             controller.setColor(color)
@@ -159,14 +168,23 @@ final class OverlayWindowManager {
 }
 
 @MainActor
+private final class OverlayKeyableWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+@MainActor
 private final class OverlayWindowController {
     private let window: NSWindow
     private let canvasView: CanvasView
 
+    private var inkModeEnabled: Bool = false
+    private var clickthroughEnabled: Bool = false
+
     init(screen: NSScreen) {
         canvasView = CanvasView(frame: screen.frame)
 
-        window = NSWindow(
+        window = OverlayKeyableWindow(
             contentRect: screen.frame,
             styleMask: [.borderless],
             backing: .buffered,
@@ -180,7 +198,8 @@ private final class OverlayWindowController {
         // A reliable "always-on-top" for overlays; may still have edge cases with system UI.
         window.level = .screenSaver
 
-        window.ignoresMouseEvents = true
+        // Default: not ink mode; allow hit-testing shapes while still letting empty regions click through.
+        window.ignoresMouseEvents = false
         window.collectionBehavior = [
             .canJoinAllSpaces,
             .stationary,
@@ -212,11 +231,24 @@ private final class OverlayWindowController {
     }
 
     func setInkModeEnabled(_ enabled: Bool) {
-        window.ignoresMouseEvents = !enabled
-        canvasView.inkModeEnabled = enabled
+        inkModeEnabled = enabled
+        applyMousePolicy()
         if enabled {
             window.makeKeyAndOrderFront(nil)
         }
+    }
+
+    func setClickthroughEnabled(_ enabled: Bool) {
+        clickthroughEnabled = enabled
+        applyMousePolicy()
+    }
+
+    private func applyMousePolicy() {
+        // Ink mode always captures input for drawing.
+        // Otherwise, click-through is controlled by the clickthroughEnabled flag.
+        window.ignoresMouseEvents = (!inkModeEnabled && clickthroughEnabled)
+        canvasView.inkModeEnabled = inkModeEnabled
+        canvasView.clickthroughEnabled = clickthroughEnabled
     }
 
     func setTool(_ tool: OverlayState.Tool) {

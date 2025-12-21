@@ -4,6 +4,7 @@ import Carbon
 final class HotkeyManager {
     var onToggleOverlay: (() -> Void)?
     var onToggleMode: (() -> Void)?
+    var onToggleClickthrough: (() -> Void)?
     var onExitInkMode: (() -> Void)?
     var onUndo: (() -> Void)?
     var onClear: (() -> Void)?
@@ -22,6 +23,7 @@ final class HotkeyManager {
         // Defaults (can be changed later):
         //  - Toggle overlay: Ctrl+Shift+O
         //  - Toggle mode:   Ctrl+Shift+I
+        //  - Click-through: Ctrl+Shift+C
         //  - Undo:          Ctrl+Shift+Z
         //  - Clear:         Ctrl+Shift+X
         //  - Toolbox:       Ctrl+Shift+T
@@ -57,9 +59,10 @@ final class HotkeyManager {
         let defaultModifiers = UInt32(controlKey | shiftKey)
         hotKeys.append(registerHotKey(signature: signature, id: 1, keyCode: UInt32(kVK_ANSI_O), modifiers: defaultModifiers))
         hotKeys.append(registerHotKey(signature: signature, id: 2, keyCode: UInt32(kVK_ANSI_I), modifiers: defaultModifiers))
-        hotKeys.append(registerHotKey(signature: signature, id: 3, keyCode: UInt32(kVK_ANSI_Z), modifiers: defaultModifiers))
-        hotKeys.append(registerHotKey(signature: signature, id: 4, keyCode: UInt32(kVK_ANSI_X), modifiers: defaultModifiers))
-        hotKeys.append(registerHotKey(signature: signature, id: 5, keyCode: UInt32(kVK_ANSI_T), modifiers: defaultModifiers))
+        hotKeys.append(registerHotKey(signature: signature, id: 3, keyCode: UInt32(kVK_ANSI_C), modifiers: defaultModifiers))
+        hotKeys.append(registerHotKey(signature: signature, id: 4, keyCode: UInt32(kVK_ANSI_Z), modifiers: defaultModifiers))
+        hotKeys.append(registerHotKey(signature: signature, id: 5, keyCode: UInt32(kVK_ANSI_X), modifiers: defaultModifiers))
+        hotKeys.append(registerHotKey(signature: signature, id: 6, keyCode: UInt32(kVK_ANSI_T), modifiers: defaultModifiers))
     }
 
     private func registerHotKey(signature: OSType, id: UInt32, keyCode: UInt32, modifiers: UInt32) -> EventHotKeyRef? {
@@ -79,10 +82,12 @@ final class HotkeyManager {
         case 2:
             onToggleMode?()
         case 3:
-            onUndo?()
+            onToggleClickthrough?()
         case 4:
-            onClear?()
+            onUndo?()
         case 5:
+            onClear?()
+        case 6:
             onToggleToolbox?()
         default:
             break

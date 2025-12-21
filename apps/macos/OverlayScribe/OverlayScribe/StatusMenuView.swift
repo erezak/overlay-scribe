@@ -17,6 +17,12 @@ struct StatusMenuView: View {
                 }
                 .keyboardShortcut("i", modifiers: [.control, .shift])
 
+            Toggle("Click-through", isOn: $overlayState.clickthroughEnabled)
+                .onChange(of: overlayState.clickthroughEnabled) { _ in
+                    overlayState.applyOverlayState()
+                }
+                .keyboardShortcut("c", modifiers: [.control, .shift])
+
             Toggle("Toolbox", isOn: $overlayState.toolboxVisible)
                 .onChange(of: overlayState.toolboxVisible) { newValue in
                     overlayState.setToolboxVisible(newValue)

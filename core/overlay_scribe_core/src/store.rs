@@ -38,8 +38,19 @@ pub enum StoreError {
 #[derive(Debug, Clone)]
 enum Edit {
     AddItem(Item),
-    RemoveItem { index: usize, item: Item },
-    ReplaceAll { before: Vec<Item>, after: Vec<Item> },
+    RemoveItem {
+        index: usize,
+        item: Item,
+    },
+    ReplaceItem {
+        index: usize,
+        before: Item,
+        after: Item,
+    },
+    ReplaceAll {
+        before: Vec<Item>,
+        after: Vec<Item>,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -69,9 +80,9 @@ impl Store {
         self.next_id = self
             .items
             .iter()
-            .filter_map(|item| match item {
-                Item::Stroke(s) => Some(s.id),
-                Item::Shape(sh) => Some(sh.id),
+            .map(|item| match item {
+                Item::Stroke(s) => s.id,
+                Item::Shape(sh) => sh.id,
             })
             .max()
             .unwrap_or(0)
@@ -118,11 +129,32 @@ impl Store {
             style,
             start,
             end: start,
+            text: String::new(),
+            text_align_h: Default::default(),
+            text_align_v: Default::default(),
         }
     }
 
     pub fn commit_shape(&mut self, shape: Shape) {
-        self.apply(Edit::AddItem(Item::Shape(shape)));
+        // If a shape with this id already exists, treat this as an update.
+        // This supports editing operations (e.g., text changes) without duplicating items.
+        if let Some((index, before)) =
+            self.items
+                .iter()
+                .enumerate()
+                .find_map(|(i, item)| match item {
+                    Item::Shape(sh) if sh.id == shape.id => Some((i, Item::Shape(sh.clone()))),
+                    _ => None,
+                })
+        {
+            self.apply(Edit::ReplaceItem {
+                index,
+                before,
+                after: Item::Shape(shape),
+            });
+        } else {
+            self.apply(Edit::AddItem(Item::Shape(shape)));
+        }
     }
 
     pub fn clear_all(&mut self) {
@@ -191,6 +223,11 @@ impl Store {
                     self.items.remove(*index);
                 }
             }
+            Edit::ReplaceItem { index, after, .. } => {
+                if *index < self.items.len() {
+                    self.items[*index] = after.clone();
+                }
+            }
             Edit::ReplaceAll { after, .. } => self.items = after.clone(),
         }
     }
@@ -215,6 +252,20 @@ impl Store {
                 let insert_at = (*index).min(self.items.len());
                 self.items.insert(insert_at, item.clone());
                 Edit::AddItem(item.clone())
+            }
+            Edit::ReplaceItem {
+                index,
+                before,
+                after,
+            } => {
+                if *index < self.items.len() {
+                    self.items[*index] = before.clone();
+                }
+                Edit::ReplaceItem {
+                    index: *index,
+                    before: after.clone(),
+                    after: before.clone(),
+                }
             }
             Edit::ReplaceAll { before, after } => {
                 self.items = before.clone();

@@ -1,8 +1,21 @@
 import AppKit
 
 @MainActor
-final class CanvasView: NSView {
+final class CanvasView: NSView, NSTextViewDelegate {
     var inkModeEnabled: Bool = false
+    var clickthroughEnabled: Bool = false {
+        didSet {
+            if clickthroughEnabled {
+                // If we become fully click-through, clear any interactive UI.
+                if textEditor != nil {
+                    if !_commitTextEditingAndTearDown() {
+                        endTextEditing()
+                    }
+                }
+                clearSelection()
+            }
+        }
+    }
     var selectedTool: OverlayState.Tool = .pen
     var penWidth: CGFloat = 4
     var penColor: NSColor = .systemRed
@@ -18,13 +31,44 @@ final class CanvasView: NSView {
     private var activeStroke: FfiStroke?
     private var activeShape: FfiShape?
 
+    private enum DragState {
+        case none
+        case pending(start: CGPoint)
+        case dragging(start: CGPoint)
+    }
+
+    private var dragState: DragState = .none
+
+    private var selectedShapeId: UInt64?
+    private var alignmentHud: AlignmentHUDView?
+
+    private var textEditorScrollView: NSScrollView?
+    private var textEditor: NSTextView?
+    private var editingShapeId: UInt64?
+
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // Allow click-through when not in ink mode.
-        guard inkModeEnabled else { return nil }
-        return super.hitTest(point)
+        if inkModeEnabled {
+            return super.hitTest(point)
+        }
+
+        // If fully click-through, never intercept.
+        if clickthroughEnabled {
+            return nil
+        }
+
+        // Allow interactive subviews (e.g. text editor, alignment HUD) to receive clicks.
+        if let hit = super.hitTest(point), hit !== self {
+            return hit
+        }
+
+        // Not ink mode, not click-through: only intercept clicks on (or inside) shapes.
+        if hitTestShape(at: point) != nil {
+            return self
+        }
+        return nil
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
@@ -32,51 +76,130 @@ final class CanvasView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard inkModeEnabled else { return }
         let p = convert(event.locationInWindow, from: nil)
+
+        // Non-ink mode: selection + text editing on shapes.
+        if !inkModeEnabled {
+            // If we had an active editor, a click outside of it should commit so the drawn text persists.
+            if textEditor != nil {
+                _ = commitTextEditingIfNeeded()
+            }
+
+            if event.clickCount >= 2 {
+                _ = beginEditingTextIfNeeded(at: p)
+                return
+            }
+
+            if let hit = hitTestShape(at: p) {
+                selectShape(hit.shape.id)
+            }
+            return
+        }
+
+        if event.clickCount >= 2 {
+            if beginEditingTextIfNeeded(at: p) {
+                return
+            }
+        }
+
+        // Clicking outside commits any active text editing.
+        if textEditor != nil {
+            if !commitTextEditingIfNeeded() {
+                // If commit failed (e.g. shape missing), still tear down editor.
+                endTextEditing()
+            }
+        }
+
         switch selectedTool {
         case .pen:
-            activeStroke = document.beginStroke(color: penColor.asFfiColor(), width: Float(penWidth), start: p.asFfiPoint())
+            dragState = .pending(start: p)
         case .eraser:
             erase(at: p)
         case .rectangle:
-            activeShape = document.beginShape(kind: .rectangle, style: currentShapeStyle(), start: p.asFfiPoint())
+            dragState = .pending(start: p)
         case .roundedRectangle:
-            activeShape = document.beginShape(kind: .roundedRectangle, style: currentShapeStyle(), start: p.asFfiPoint())
+            dragState = .pending(start: p)
         case .ellipse:
-            activeShape = document.beginShape(kind: .ellipse, style: currentShapeStyle(), start: p.asFfiPoint())
+            dragState = .pending(start: p)
         case .arrow:
-            activeShape = document.beginShape(kind: .arrow, style: currentShapeStyle(), start: p.asFfiPoint())
+            dragState = .pending(start: p)
         case .curvedArrow:
-            activeShape = document.beginShape(kind: .curvedArrow, style: currentShapeStyle(), start: p.asFfiPoint())
+            dragState = .pending(start: p)
         }
     }
 
     override func mouseDragged(with event: NSEvent) {
         guard inkModeEnabled else { return }
         let p = convert(event.locationInWindow, from: nil)
+
+        switch dragState {
+        case .none:
+            break
+        case .pending(let start):
+            let dx = p.x - start.x
+            let dy = p.y - start.y
+            let dist2 = dx * dx + dy * dy
+            let threshold: CGFloat = 6
+            if dist2 >= threshold * threshold {
+                dragState = .dragging(start: start)
+                beginDragGesture(at: start)
+            }
+        case .dragging:
+            break
+        }
+
         switch selectedTool {
         case .pen:
-            activeStroke?.points.append(p.asFfiPoint())
-            setNeedsDisplay(bounds)
+            if activeStroke != nil {
+                activeStroke?.points.append(p.asFfiPoint())
+                setNeedsDisplay(bounds)
+            }
         case .eraser:
             erase(at: p)
         case .rectangle, .roundedRectangle, .ellipse, .arrow, .curvedArrow:
-            activeShape?.end = p.asFfiPoint()
-            setNeedsDisplay(bounds)
+            if activeShape != nil {
+                activeShape?.end = p.asFfiPoint()
+                setNeedsDisplay(bounds)
+            }
         }
     }
 
     override func mouseUp(with event: NSEvent) {
         guard inkModeEnabled else { return }
-        if var stroke = activeStroke {
-            stroke.points.append(convert(event.locationInWindow, from: nil).asFfiPoint())
-            commit(stroke: stroke)
+        let p = convert(event.locationInWindow, from: nil)
+
+        defer {
             activeStroke = nil
-        } else if var shape = activeShape {
-            shape.end = convert(event.locationInWindow, from: nil).asFfiPoint()
-            commit(shape: shape)
             activeShape = nil
+            dragState = .none
+        }
+
+        // If we never started a drag gesture, treat this as a click.
+        if case .pending = dragState {
+            if let hit = hitTestShape(at: p) {
+                selectShape(hit.shape.id)
+                return
+            }
+
+            // Pen: allow a single-click dot.
+            if selectedTool == .pen {
+                var stroke = document.beginStroke(color: penColor.asFfiColor(), width: Float(penWidth), start: p.asFfiPoint())
+                stroke.points.append(p.asFfiPoint())
+                commit(stroke: stroke)
+            }
+            return
+        }
+
+        if var stroke = activeStroke {
+            stroke.points.append(p.asFfiPoint())
+            commit(stroke: stroke)
+            return
+        }
+
+        if var shape = activeShape {
+            shape.end = p.asFfiPoint()
+            commit(shape: shape)
+            return
         }
     }
 
@@ -132,6 +255,7 @@ final class CanvasView: NSView {
                 let path = CGPath(rect: rect, transform: nil)
                 fillAndHatch(path: path)
                 ctx.stroke(rect)
+                drawShapeTextIfNeeded(shape, in: rect, clipPath: path)
 
             case .roundedRectangle:
                 let rect = rectFromPoints(a: shape.start.asCGPoint(), b: shape.end.asCGPoint())
@@ -140,18 +264,24 @@ final class CanvasView: NSView {
                 fillAndHatch(path: path)
                 ctx.addPath(path)
                 ctx.strokePath()
+                drawShapeTextIfNeeded(shape, in: rect, clipPath: path)
 
             case .ellipse:
                 let rect = rectFromPoints(a: shape.start.asCGPoint(), b: shape.end.asCGPoint())
                 let path = CGPath(ellipseIn: rect, transform: nil)
                 fillAndHatch(path: path)
                 ctx.strokeEllipse(in: rect)
+                drawShapeTextIfNeeded(shape, in: rect, clipPath: path)
 
             case .arrow:
                 drawArrow(ctx: ctx, start: shape.start.asCGPoint(), end: shape.end.asCGPoint(), lineWidth: CGFloat(shape.style.strokeWidth), fillColor: strokeColor)
 
             case .curvedArrow:
                 drawCurvedArrow(ctx: ctx, start: shape.start.asCGPoint(), end: shape.end.asCGPoint(), lineWidth: CGFloat(shape.style.strokeWidth), strokeColor: strokeColor)
+            }
+
+            if selectedShapeId == shape.id {
+                drawSelectionOutline(for: shape, ctx: ctx)
             }
         }
 
@@ -170,18 +300,21 @@ final class CanvasView: NSView {
     }
 
     func clearAll() {
+        _ = commitTextEditingIfNeeded()
         document.clearAll()
         refreshItems()
         setNeedsDisplay(bounds)
     }
 
     func undo() {
+        _ = commitTextEditingIfNeeded()
         guard document.undo() else { return }
         refreshItems()
         setNeedsDisplay(bounds)
     }
 
     func redo() {
+        _ = commitTextEditingIfNeeded()
         guard document.redo() else { return }
         refreshItems()
         setNeedsDisplay(bounds)
@@ -208,8 +341,326 @@ final class CanvasView: NSView {
 
     private func refreshItems() {
         cachedItems = document.items()
+
+        if let selectedShapeId, !cachedItems.contains(where: { item in
+            if case .shape(let sh) = item { return sh.id == selectedShapeId }
+            return false
+        }) {
+            clearSelection()
+        } else {
+            updateAlignmentHud()
+        }
     }
 
+    private func beginDragGesture(at start: CGPoint) {
+        clearSelection()
+        switch selectedTool {
+        case .pen:
+            activeStroke = document.beginStroke(color: penColor.asFfiColor(), width: Float(penWidth), start: start.asFfiPoint())
+        case .eraser:
+            break
+        case .rectangle:
+            activeShape = document.beginShape(kind: .rectangle, style: currentShapeStyle(), start: start.asFfiPoint())
+        case .roundedRectangle:
+            activeShape = document.beginShape(kind: .roundedRectangle, style: currentShapeStyle(), start: start.asFfiPoint())
+        case .ellipse:
+            activeShape = document.beginShape(kind: .ellipse, style: currentShapeStyle(), start: start.asFfiPoint())
+        case .arrow:
+            activeShape = document.beginShape(kind: .arrow, style: currentShapeStyle(), start: start.asFfiPoint())
+        case .curvedArrow:
+            activeShape = document.beginShape(kind: .curvedArrow, style: currentShapeStyle(), start: start.asFfiPoint())
+        }
+    }
+
+    private struct ShapeHit {
+        let shape: FfiShape
+        let rect: CGRect
+        let path: CGPath?
+        let isClosed: Bool
+    }
+
+    private func isClosedShape(_ kind: FfiShapeKind) -> Bool {
+        switch kind {
+        case .rectangle, .roundedRectangle, .ellipse:
+            return true
+        case .arrow, .curvedArrow:
+            return false
+        }
+    }
+
+    private func shapePathAndRect(for shape: FfiShape) -> (rect: CGRect, path: CGPath?) {
+        let rect = rectFromPoints(a: shape.start.asCGPoint(), b: shape.end.asCGPoint())
+        switch shape.kind {
+        case .rectangle:
+            return (rect, CGPath(rect: rect, transform: nil))
+        case .roundedRectangle:
+            let radius = min(CGFloat(shape.style.cornerRadius), min(rect.width, rect.height) / 2)
+            return (rect, roundedRectPath(in: rect, radius: radius))
+        case .ellipse:
+            return (rect, CGPath(ellipseIn: rect, transform: nil))
+        case .arrow, .curvedArrow:
+            return (rect, nil)
+        }
+    }
+
+    private func hitTestShape(at point: CGPoint) -> ShapeHit? {
+        // Iterate in reverse so the most recently-added items win.
+        for item in cachedItems.reversed() {
+            guard case .shape(let shape) = item else { continue }
+            let (rect, path) = shapePathAndRect(for: shape)
+            let closed = isClosedShape(shape.kind)
+            if closed, let path {
+                if path.contains(point) {
+                    return ShapeHit(shape: shape, rect: rect, path: path, isClosed: true)
+                }
+            } else {
+                // Fallback: bounding box hit-test (for arrows too).
+                if rect.contains(point) {
+                    return ShapeHit(shape: shape, rect: rect, path: path, isClosed: closed)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func selectShape(_ id: UInt64) {
+        selectedShapeId = id
+        updateAlignmentHud()
+        setNeedsDisplay(bounds)
+    }
+
+    private func clearSelection() {
+        selectedShapeId = nil
+        updateAlignmentHud()
+        setNeedsDisplay(bounds)
+    }
+
+    private func updateAlignmentHud() {
+        guard let selectedShapeId,
+              let hit = cachedItems.compactMap({ item -> ShapeHit? in
+                  guard case .shape(let sh) = item else { return nil }
+                  guard sh.id == selectedShapeId else { return nil }
+                  let (rect, path) = shapePathAndRect(for: sh)
+                  return ShapeHit(shape: sh, rect: rect, path: path, isClosed: isClosedShape(sh.kind))
+              }).first,
+              hit.isClosed
+        else {
+            alignmentHud?.removeFromSuperview()
+            alignmentHud = nil
+            return
+        }
+
+        if alignmentHud == nil {
+            let hud = AlignmentHUDView()
+            hud.onAlignH = { [weak self] align in
+                self?.applyTextAlignment(h: align)
+            }
+            hud.onAlignV = { [weak self] align in
+                self?.applyTextAlignment(v: align)
+            }
+            addSubview(hud)
+            alignmentHud = hud
+        }
+
+        alignmentHud?.setSelected(alignH: hit.shape.textAlignH, alignV: hit.shape.textAlignV)
+
+        // Position near the top-left of the shape bounds.
+        let hudSize = alignmentHud?.intrinsicContentSize ?? CGSize(width: 150, height: 44)
+        let origin = CGPoint(
+            x: min(max(8, hit.rect.minX + 8), bounds.maxX - hudSize.width - 8),
+            y: min(max(8, hit.rect.minY + 8), bounds.maxY - hudSize.height - 8)
+        )
+        alignmentHud?.frame = CGRect(origin: origin, size: hudSize)
+    }
+
+    private func applyTextAlignment(h: FfiTextAlignH? = nil, v: FfiTextAlignV? = nil) {
+        guard let selectedShapeId else { return }
+        guard var shape = cachedItems.compactMap({ item -> FfiShape? in
+            if case .shape(let sh) = item, sh.id == selectedShapeId { return sh }
+            return nil
+        }).first else { return }
+
+        if let h { shape.textAlignH = h }
+        if let v { shape.textAlignV = v }
+
+        document.commitShape(shape: shape)
+        refreshItems()
+        setNeedsDisplay(bounds)
+    }
+
+    private func beginEditingTextIfNeeded(at point: CGPoint) -> Bool {
+        guard let hit = hitTestShape(at: point) else { return false }
+        guard hit.isClosed else { return false }
+
+        selectShape(hit.shape.id)
+        beginTextEditing(shape: hit.shape, shapeRect: hit.rect, clipPath: hit.path)
+        return true
+    }
+
+    private func beginTextEditing(shape: FfiShape, shapeRect: CGRect, clipPath: CGPath?) {
+        endTextEditing()
+
+        let padding: CGFloat = 10
+        let editorRect = shapeRect.insetBy(dx: padding, dy: padding)
+        guard editorRect.width >= 24, editorRect.height >= 20 else { return }
+
+        let textView = NSTextView(frame: editorRect)
+        textView.delegate = self
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+        textView.insertionPointColor = .labelColor
+        textView.textColor = .labelColor
+        textView.font = NSFont.systemFont(ofSize: 15, weight: .medium)
+        textView.textContainerInset = CGSize(width: 6, height: 6)
+        textView.string = shape.text
+        textView.alignment = shape.textAlignH.asNSTextAlignment()
+
+        if let container = textView.textContainer {
+            container.lineFragmentPadding = 0
+            container.widthTracksTextView = true
+            container.heightTracksTextView = false
+        }
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+
+        let scroll = NSScrollView(frame: editorRect)
+        scroll.drawsBackground = false
+        scroll.backgroundColor = .clear
+        scroll.borderType = .noBorder
+        scroll.hasVerticalScroller = false
+        scroll.hasHorizontalScroller = false
+        scroll.autoresizingMask = []
+        scroll.documentView = textView
+
+        // Clip to the closed shape so typing stays "inside".
+        if let clipPath {
+            scroll.wantsLayer = true
+            scroll.layer?.masksToBounds = true
+            let maskLayer = CAShapeLayer()
+            var t = CGAffineTransform(translationX: -editorRect.origin.x, y: -editorRect.origin.y)
+            maskLayer.path = clipPath.copy(using: &t)
+            scroll.layer?.mask = maskLayer
+        }
+
+        addSubview(scroll)
+        textEditorScrollView = scroll
+        textEditor = textView
+        editingShapeId = shape.id
+
+        // Ensure the overlay can actually accept key events while editing.
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+        window?.makeFirstResponder(textView)
+        setNeedsDisplay(bounds)
+    }
+
+    private func commitTextEditingIfNeeded() -> Bool {
+        guard let editingShapeId, let textView = textEditor else { return true }
+        guard var shape = cachedItems.compactMap({ item -> FfiShape? in
+            if case .shape(let sh) = item, sh.id == editingShapeId { return sh }
+            return nil
+        }).first else {
+            endTextEditing()
+            return false
+        }
+
+        shape.text = textView.string
+        document.commitShape(shape: shape)
+        refreshItems()
+        endTextEditing()
+        setNeedsDisplay(bounds)
+        return true
+    }
+
+    private func endTextEditing() {
+        textEditor = nil
+        editingShapeId = nil
+        textEditorScrollView?.removeFromSuperview()
+        textEditorScrollView = nil
+    }
+
+    private func _commitTextEditingAndTearDown() -> Bool {
+        let ok = commitTextEditingIfNeeded()
+        endTextEditing()
+        return ok
+    }
+
+    func textDidEndEditing(_ notification: Notification) {
+        _ = commitTextEditingIfNeeded()
+    }
+
+    private func drawShapeTextIfNeeded(_ shape: FfiShape, in rect: CGRect, clipPath: CGPath?) {
+        guard isClosedShape(shape.kind) else { return }
+        let text = shape.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        let insetRect = rect.insetBy(dx: 10, dy: 10)
+        guard insetRect.width > 6, insetRect.height > 6 else { return }
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = shape.textAlignH.asNSTextAlignment()
+        paragraph.lineBreakMode = .byWordWrapping
+
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 15, weight: .medium),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: paragraph,
+        ]
+
+        let nsText = text as NSString
+        let measured = nsText.boundingRect(
+            with: CGSize(width: insetRect.width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attrs
+        )
+
+        let textHeight = min(insetRect.height, ceil(measured.height))
+        let y: CGFloat
+        switch shape.textAlignV {
+        case .top:
+            y = insetRect.minY
+        case .middle:
+            y = insetRect.minY + (insetRect.height - textHeight) / 2
+        case .bottom:
+            y = insetRect.maxY - textHeight
+        }
+
+        let drawRect = CGRect(x: insetRect.minX, y: y, width: insetRect.width, height: textHeight)
+
+        // Clip using CoreGraphics so we support macOS 13 (NSBezierPath(cgPath:) is macOS 14+).
+        guard let cgContext = NSGraphicsContext.current?.cgContext else {
+            nsText.draw(with: drawRect, options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attrs)
+            return
+        }
+
+        cgContext.saveGState()
+        if let clipPath {
+            cgContext.addPath(clipPath)
+            cgContext.clip()
+        }
+        nsText.draw(with: drawRect, options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attrs)
+        cgContext.restoreGState()
+    }
+
+    private func drawSelectionOutline(for shape: FfiShape, ctx: CGContext) {
+        let (rect, path) = shapePathAndRect(for: shape)
+        ctx.saveGState()
+        ctx.setStrokeColor(NSColor.selectedControlColor.withAlphaComponent(0.9).cgColor)
+        ctx.setLineWidth(2)
+        ctx.setLineDash(phase: 0, lengths: [6, 4])
+
+        if let path {
+            ctx.addPath(path)
+            ctx.strokePath()
+        } else {
+            ctx.stroke(rect)
+        }
+
+        ctx.restoreGState()
+    }
     private func currentShapeStyle() -> FfiShapeStyle {
         FfiShapeStyle(
             strokeColor: penColor.asFfiColor(),
@@ -459,4 +910,125 @@ private extension FfiColorRgba8 {
             alpha: CGFloat(a) / 255.0
         )
     }
+}
+
+private extension FfiTextAlignH {
+    func asNSTextAlignment() -> NSTextAlignment {
+        switch self {
+        case .left: return .left
+        case .center: return .center
+        case .right: return .right
+        }
+    }
+}
+
+private final class AlignmentHUDView: NSVisualEffectView {
+    var onAlignH: ((FfiTextAlignH) -> Void)?
+    var onAlignV: ((FfiTextAlignV) -> Void)?
+
+    private let leftButton = NSButton()
+    private let centerButton = NSButton()
+    private let rightButton = NSButton()
+    private let topButton = NSButton()
+    private let middleButton = NSButton()
+    private let bottomButton = NSButton()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        material = .hudWindow
+        blendingMode = .withinWindow
+        state = .active
+        wantsLayer = true
+        layer?.cornerRadius = 10
+
+        let hStack = NSStackView(views: [leftButton, centerButton, rightButton])
+        hStack.orientation = .horizontal
+        hStack.spacing = 6
+        hStack.alignment = .centerY
+
+        let vStack = NSStackView(views: [topButton, middleButton, bottomButton])
+        vStack.orientation = .horizontal
+        vStack.spacing = 6
+        vStack.alignment = .centerY
+
+        let root = NSStackView(views: [hStack, vStack])
+        root.orientation = .vertical
+        root.spacing = 6
+        root.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        addSubview(root)
+        root.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            root.leadingAnchor.constraint(equalTo: leadingAnchor),
+            root.trailingAnchor.constraint(equalTo: trailingAnchor),
+            root.topAnchor.constraint(equalTo: topAnchor),
+            root.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        configureButton(leftButton, symbol: "text.alignleft", fallback: nil, tooltip: "Align Left")
+        configureButton(centerButton, symbol: "text.aligncenter", fallback: nil, tooltip: "Align Center")
+        configureButton(rightButton, symbol: "text.alignright", fallback: nil, tooltip: "Align Right")
+
+        configureButton(topButton, symbol: "align.vertical.top", fallback: "arrow.up.to.line", tooltip: "Align Top")
+        configureButton(middleButton, symbol: "align.vertical.center", fallback: "arrow.up.and.down", tooltip: "Align Middle")
+        configureButton(bottomButton, symbol: "align.vertical.bottom", fallback: "arrow.down.to.line", tooltip: "Align Bottom")
+
+        leftButton.target = self
+        leftButton.action = #selector(tapLeft)
+        centerButton.target = self
+        centerButton.action = #selector(tapCenter)
+        rightButton.target = self
+        rightButton.action = #selector(tapRight)
+
+        topButton.target = self
+        topButton.action = #selector(tapTop)
+        middleButton.target = self
+        middleButton.action = #selector(tapMiddle)
+        bottomButton.target = self
+        bottomButton.action = #selector(tapBottom)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 152, height: 72)
+    }
+
+    func setSelected(alignH: FfiTextAlignH, alignV: FfiTextAlignV) {
+        setHighlighted(leftButton, alignH == .left)
+        setHighlighted(centerButton, alignH == .center)
+        setHighlighted(rightButton, alignH == .right)
+
+        setHighlighted(topButton, alignV == .top)
+        setHighlighted(middleButton, alignV == .middle)
+        setHighlighted(bottomButton, alignV == .bottom)
+    }
+
+    private func configureButton(_ button: NSButton, symbol: String, fallback: String?, tooltip: String) {
+        button.bezelStyle = .texturedRounded
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.toolTip = tooltip
+        button.contentTintColor = .labelColor
+        button.wantsLayer = true
+        button.layer?.cornerRadius = 8
+
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tooltip)
+            ?? (fallback.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: tooltip) })
+        button.image = image
+    }
+
+    private func setHighlighted(_ button: NSButton, _ highlighted: Bool) {
+        button.layer?.backgroundColor = highlighted
+            ? NSColor.selectedControlColor.withAlphaComponent(0.25).cgColor
+            : NSColor.clear.cgColor
+    }
+
+    @objc private func tapLeft() { onAlignH?(.left) }
+    @objc private func tapCenter() { onAlignH?(.center) }
+    @objc private func tapRight() { onAlignH?(.right) }
+    @objc private func tapTop() { onAlignV?(.top) }
+    @objc private func tapMiddle() { onAlignV?(.middle) }
+    @objc private func tapBottom() { onAlignV?(.bottom) }
 }

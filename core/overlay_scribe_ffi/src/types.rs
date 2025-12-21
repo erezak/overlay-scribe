@@ -1,5 +1,6 @@
 use overlay_scribe_core::{
-    ColorRgba8, Document, Item, Point, Shape, ShapeKind, ShapeStyle, Store, Stroke,
+    ColorRgba8, Document, Item, Point, Shape, ShapeKind, ShapeStyle, Store, Stroke, TextAlignH,
+    TextAlignV,
 };
 use std::sync::Mutex;
 
@@ -130,6 +131,60 @@ pub struct FfiShapeStyle {
     pub corner_radius: f32,
 }
 
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum FfiTextAlignH {
+    Left,
+    Center,
+    Right,
+}
+
+impl From<FfiTextAlignH> for TextAlignH {
+    fn from(value: FfiTextAlignH) -> Self {
+        match value {
+            FfiTextAlignH::Left => TextAlignH::Left,
+            FfiTextAlignH::Center => TextAlignH::Center,
+            FfiTextAlignH::Right => TextAlignH::Right,
+        }
+    }
+}
+
+impl From<TextAlignH> for FfiTextAlignH {
+    fn from(value: TextAlignH) -> Self {
+        match value {
+            TextAlignH::Left => FfiTextAlignH::Left,
+            TextAlignH::Center => FfiTextAlignH::Center,
+            TextAlignH::Right => FfiTextAlignH::Right,
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum FfiTextAlignV {
+    Top,
+    Middle,
+    Bottom,
+}
+
+impl From<FfiTextAlignV> for TextAlignV {
+    fn from(value: FfiTextAlignV) -> Self {
+        match value {
+            FfiTextAlignV::Top => TextAlignV::Top,
+            FfiTextAlignV::Middle => TextAlignV::Middle,
+            FfiTextAlignV::Bottom => TextAlignV::Bottom,
+        }
+    }
+}
+
+impl From<TextAlignV> for FfiTextAlignV {
+    fn from(value: TextAlignV) -> Self {
+        match value {
+            TextAlignV::Top => FfiTextAlignV::Top,
+            TextAlignV::Middle => FfiTextAlignV::Middle,
+            TextAlignV::Bottom => FfiTextAlignV::Bottom,
+        }
+    }
+}
+
 impl From<FfiShapeStyle> for ShapeStyle {
     fn from(value: FfiShapeStyle) -> Self {
         Self {
@@ -163,6 +218,9 @@ pub struct FfiShape {
     pub style: FfiShapeStyle,
     pub start: FfiPoint,
     pub end: FfiPoint,
+    pub text: String,
+    pub text_align_h: FfiTextAlignH,
+    pub text_align_v: FfiTextAlignV,
 }
 
 impl From<FfiShape> for Shape {
@@ -173,6 +231,9 @@ impl From<FfiShape> for Shape {
             style: value.style.into(),
             start: value.start.into(),
             end: value.end.into(),
+            text: value.text,
+            text_align_h: value.text_align_h.into(),
+            text_align_v: value.text_align_v.into(),
         }
     }
 }
@@ -185,6 +246,9 @@ impl From<Shape> for FfiShape {
             style: value.style.into(),
             start: value.start.into(),
             end: value.end.into(),
+            text: value.text,
+            text_align_h: value.text_align_h.into(),
+            text_align_v: value.text_align_v.into(),
         }
     }
 }

@@ -22,6 +22,9 @@ final class OverlayState: ObservableObject {
 
     @Published var overlayEnabled: Bool = false
     @Published var inkModeEnabled: Bool = false
+    // When true, the overlay is fully click-through to apps behind it.
+    // When false, shapes can intercept clicks (for selection/text editing).
+    @Published var clickthroughEnabled: Bool = false
     @Published var selectedTool: Tool = .pen
 
     @Published var toolboxVisible: Bool = false
@@ -55,6 +58,9 @@ final class OverlayState: ObservableObject {
         hotkeyManager.onToggleMode = { [weak self] in
             Task { @MainActor in self?.toggleInkMode() }
         }
+        hotkeyManager.onToggleClickthrough = { [weak self] in
+            Task { @MainActor in self?.toggleClickthrough() }
+        }
         hotkeyManager.onExitInkMode = { [weak self] in
             Task { @MainActor in self?.disableInkMode() }
         }
@@ -78,6 +84,11 @@ final class OverlayState: ObservableObject {
 
     func toggleInkMode() {
         inkModeEnabled.toggle()
+        applyOverlayState()
+    }
+
+    func toggleClickthrough() {
+        clickthroughEnabled.toggle()
         applyOverlayState()
     }
 
@@ -124,6 +135,7 @@ final class OverlayState: ObservableObject {
         }
 
         windowManager.setInkModeEnabled(inkModeEnabled)
+        windowManager.setClickthroughEnabled(clickthroughEnabled)
         windowManager.setTool(selectedTool)
         windowManager.setPenWidth(penWidth)
         windowManager.setColor(selectedColor)
@@ -251,6 +263,28 @@ private struct ToolboxView: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .onChange(of: overlayState.inkModeEnabled) { _ in
+                    overlayState.applyOverlayState()
+                }
+            }
+
+            HStack {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(overlayState.clickthroughEnabled ? Color.orange : Color.secondary.opacity(0.4))
+                        .frame(width: 10, height: 10)
+                    Text("Click-through")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(overlayState.clickthroughEnabled ? "ON" : "OFF")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(overlayState.clickthroughEnabled ? .primary : .secondary)
+                }
+                Spacer()
+                Toggle(isOn: $overlayState.clickthroughEnabled) {
+                    EmptyView()
+                }
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .onChange(of: overlayState.clickthroughEnabled) { _ in
                     overlayState.applyOverlayState()
                 }
             }
