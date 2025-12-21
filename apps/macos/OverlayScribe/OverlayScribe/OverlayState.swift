@@ -233,6 +233,28 @@ private struct ToolboxView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(overlayState.inkModeEnabled ? Color.green : Color.secondary.opacity(0.4))
+                        .frame(width: 10, height: 10)
+                    Text("Ink Mode")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(overlayState.inkModeEnabled ? "ON" : "OFF")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(overlayState.inkModeEnabled ? .primary : .secondary)
+                }
+                Spacer()
+                Toggle(isOn: $overlayState.inkModeEnabled) {
+                    EmptyView()
+                }
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .onChange(of: overlayState.inkModeEnabled) { _ in
+                    overlayState.applyOverlayState()
+                }
+            }
+
             let columns: [GridItem] = [
                 GridItem(.flexible(minimum: 120), spacing: 8),
                 GridItem(.flexible(minimum: 120), spacing: 8),
