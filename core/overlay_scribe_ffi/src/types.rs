@@ -1,4 +1,6 @@
-use overlay_scribe_core::{ColorRgba8, Document, Point, Stroke, StrokeStore};
+use overlay_scribe_core::{
+    ColorRgba8, Document, Item, Point, Shape, ShapeKind, ShapeStyle, Store, Stroke,
+};
 use std::sync::Mutex;
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -85,9 +87,135 @@ impl From<Stroke> for FfiStroke {
     }
 }
 
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum FfiShapeKind {
+    Rectangle,
+    RoundedRectangle,
+    Ellipse,
+    Arrow,
+    CurvedArrow,
+}
+
+impl From<FfiShapeKind> for ShapeKind {
+    fn from(value: FfiShapeKind) -> Self {
+        match value {
+            FfiShapeKind::Rectangle => ShapeKind::Rectangle,
+            FfiShapeKind::RoundedRectangle => ShapeKind::RoundedRectangle,
+            FfiShapeKind::Ellipse => ShapeKind::Ellipse,
+            FfiShapeKind::Arrow => ShapeKind::Arrow,
+            FfiShapeKind::CurvedArrow => ShapeKind::CurvedArrow,
+        }
+    }
+}
+
+impl From<ShapeKind> for FfiShapeKind {
+    fn from(value: ShapeKind) -> Self {
+        match value {
+            ShapeKind::Rectangle => FfiShapeKind::Rectangle,
+            ShapeKind::RoundedRectangle => FfiShapeKind::RoundedRectangle,
+            ShapeKind::Ellipse => FfiShapeKind::Ellipse,
+            ShapeKind::Arrow => FfiShapeKind::Arrow,
+            ShapeKind::CurvedArrow => FfiShapeKind::CurvedArrow,
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiShapeStyle {
+    pub stroke_color: FfiColorRgba8,
+    pub stroke_width: f32,
+    pub fill_enabled: bool,
+    pub fill_color: FfiColorRgba8,
+    pub hatch_enabled: bool,
+    pub corner_radius: f32,
+}
+
+impl From<FfiShapeStyle> for ShapeStyle {
+    fn from(value: FfiShapeStyle) -> Self {
+        Self {
+            stroke_color: value.stroke_color.into(),
+            stroke_width: value.stroke_width,
+            fill_enabled: value.fill_enabled,
+            fill_color: value.fill_color.into(),
+            hatch_enabled: value.hatch_enabled,
+            corner_radius: value.corner_radius,
+        }
+    }
+}
+
+impl From<ShapeStyle> for FfiShapeStyle {
+    fn from(value: ShapeStyle) -> Self {
+        Self {
+            stroke_color: value.stroke_color.into(),
+            stroke_width: value.stroke_width,
+            fill_enabled: value.fill_enabled,
+            fill_color: value.fill_color.into(),
+            hatch_enabled: value.hatch_enabled,
+            corner_radius: value.corner_radius,
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiShape {
+    pub id: u64,
+    pub kind: FfiShapeKind,
+    pub style: FfiShapeStyle,
+    pub start: FfiPoint,
+    pub end: FfiPoint,
+}
+
+impl From<FfiShape> for Shape {
+    fn from(value: FfiShape) -> Self {
+        Self {
+            id: value.id,
+            kind: value.kind.into(),
+            style: value.style.into(),
+            start: value.start.into(),
+            end: value.end.into(),
+        }
+    }
+}
+
+impl From<Shape> for FfiShape {
+    fn from(value: Shape) -> Self {
+        Self {
+            id: value.id,
+            kind: value.kind.into(),
+            style: value.style.into(),
+            start: value.start.into(),
+            end: value.end.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum FfiItem {
+    Stroke(FfiStroke),
+    Shape(FfiShape),
+}
+
+impl From<FfiItem> for Item {
+    fn from(value: FfiItem) -> Self {
+        match value {
+            FfiItem::Stroke(s) => Item::Stroke(s.into()),
+            FfiItem::Shape(sh) => Item::Shape(sh.into()),
+        }
+    }
+}
+
+impl From<Item> for FfiItem {
+    fn from(value: Item) -> Self {
+        match value {
+            Item::Stroke(s) => FfiItem::Stroke(s.into()),
+            Item::Shape(sh) => FfiItem::Shape(sh.into()),
+        }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct CoreDocument {
-    store: Mutex<StrokeStore>,
+    store: Mutex<Store>,
 }
 
 impl Default for CoreDocument {
@@ -101,26 +229,61 @@ impl CoreDocument {
     #[uniffi::constructor]
     pub fn new() -> Self {
         Self {
-            store: Mutex::new(StrokeStore::new()),
+            store: Mutex::new(Store::new()),
         }
     }
 
-    pub fn strokes(&self) -> Vec<FfiStroke> {
+    pub fn items(&self) -> Vec<FfiItem> {
         self.store
             .lock()
             .expect("mutex poisoned")
-            .strokes()
+            .items()
             .iter()
             .cloned()
             .map(Into::into)
             .collect()
     }
 
-    pub fn add_stroke(&self, stroke: FfiStroke) {
+    pub fn begin_stroke(&self, color: FfiColorRgba8, width: f32, start: FfiPoint) -> FfiStroke {
+        self.store
+            .lock()
+            .expect("mutex poisoned")
+            .begin_stroke(color.into(), width, start.into())
+            .into()
+    }
+
+    pub fn commit_stroke(&self, stroke: FfiStroke) {
         self.store
             .lock()
             .expect("mutex poisoned")
             .commit_stroke(stroke.into());
+    }
+
+    pub fn begin_shape(
+        &self,
+        kind: FfiShapeKind,
+        style: FfiShapeStyle,
+        start: FfiPoint,
+    ) -> FfiShape {
+        self.store
+            .lock()
+            .expect("mutex poisoned")
+            .begin_shape(kind.into(), style.into(), start.into())
+            .into()
+    }
+
+    pub fn commit_shape(&self, shape: FfiShape) {
+        self.store
+            .lock()
+            .expect("mutex poisoned")
+            .commit_shape(shape.into());
+    }
+
+    pub fn erase_at(&self, point: FfiPoint, radius: f32) -> bool {
+        self.store
+            .lock()
+            .expect("mutex poisoned")
+            .erase_at(point.into(), radius)
     }
 
     pub fn clear_all(&self) {
@@ -152,7 +315,7 @@ impl CoreDocument {
     }
 
     pub fn load_json(&self, json: String) -> bool {
-        match StrokeStore::from_json(&json) {
+        match Store::from_json(&json) {
             Ok(doc) => {
                 self.store
                     .lock()

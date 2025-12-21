@@ -2,37 +2,6 @@ import AppKit
 
 @MainActor
 final class CanvasView: NSView {
-    struct Stroke {
-        var color: NSColor
-        var width: CGFloat
-        var points: [CGPoint]
-    }
-
-    enum ShapeKind {
-        case rectangle
-        case roundedRectangle
-        case ellipse
-        case arrow
-        case curvedArrow
-    }
-
-    struct Shape {
-        var kind: ShapeKind
-        var color: NSColor
-        var width: CGFloat
-        var fillEnabled: Bool
-        var fillColor: NSColor
-        var hatchEnabled: Bool
-        var cornerRadius: CGFloat
-        var start: CGPoint
-        var end: CGPoint
-    }
-
-    enum Item {
-        case stroke(Stroke)
-        case shape(Shape)
-    }
-
     var inkModeEnabled: Bool = false
     var selectedTool: OverlayState.Tool = .pen
     var penWidth: CGFloat = 4
@@ -44,10 +13,10 @@ final class CanvasView: NSView {
     var shapeHatchEnabled: Bool = false
     var shapeCornerRadius: CGFloat = 18
 
-    private var items: [Item] = []
-    private var redoStack: [[Item]] = []
-    private var activeStroke: Stroke?
-    private var activeShape: Shape?
+    private let document = CoreDocument()
+    private var cachedItems: [FfiItem] = []
+    private var activeStroke: FfiStroke?
+    private var activeShape: FfiShape?
 
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
@@ -65,35 +34,21 @@ final class CanvasView: NSView {
     override func mouseDown(with event: NSEvent) {
         guard inkModeEnabled else { return }
         let p = convert(event.locationInWindow, from: nil)
-
-        func makeShape(kind: ShapeKind) -> Shape {
-            Shape(
-                kind: kind,
-                color: penColor,
-                width: penWidth,
-                fillEnabled: shapeFillEnabled,
-                fillColor: shapeFillColor,
-                hatchEnabled: shapeHatchEnabled,
-                cornerRadius: shapeCornerRadius,
-                start: p,
-                end: p
-            )
-        }
         switch selectedTool {
         case .pen:
-            activeStroke = Stroke(color: penColor, width: penWidth, points: [p])
+            activeStroke = document.beginStroke(color: penColor.asFfiColor(), width: Float(penWidth), start: p.asFfiPoint())
         case .eraser:
             erase(at: p)
         case .rectangle:
-            activeShape = makeShape(kind: .rectangle)
+            activeShape = document.beginShape(kind: .rectangle, style: currentShapeStyle(), start: p.asFfiPoint())
         case .roundedRectangle:
-            activeShape = makeShape(kind: .roundedRectangle)
+            activeShape = document.beginShape(kind: .roundedRectangle, style: currentShapeStyle(), start: p.asFfiPoint())
         case .ellipse:
-            activeShape = makeShape(kind: .ellipse)
+            activeShape = document.beginShape(kind: .ellipse, style: currentShapeStyle(), start: p.asFfiPoint())
         case .arrow:
-            activeShape = makeShape(kind: .arrow)
+            activeShape = document.beginShape(kind: .arrow, style: currentShapeStyle(), start: p.asFfiPoint())
         case .curvedArrow:
-            activeShape = makeShape(kind: .curvedArrow)
+            activeShape = document.beginShape(kind: .curvedArrow, style: currentShapeStyle(), start: p.asFfiPoint())
         }
     }
 
@@ -102,12 +57,12 @@ final class CanvasView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         switch selectedTool {
         case .pen:
-            activeStroke?.points.append(p)
+            activeStroke?.points.append(p.asFfiPoint())
             setNeedsDisplay(bounds)
         case .eraser:
             erase(at: p)
         case .rectangle, .roundedRectangle, .ellipse, .arrow, .curvedArrow:
-            activeShape?.end = p
+            activeShape?.end = p.asFfiPoint()
             setNeedsDisplay(bounds)
         }
     }
@@ -115,11 +70,11 @@ final class CanvasView: NSView {
     override func mouseUp(with event: NSEvent) {
         guard inkModeEnabled else { return }
         if var stroke = activeStroke {
-            stroke.points.append(convert(event.locationInWindow, from: nil))
+            stroke.points.append(convert(event.locationInWindow, from: nil).asFfiPoint())
             commit(stroke: stroke)
             activeStroke = nil
         } else if var shape = activeShape {
-            shape.end = convert(event.locationInWindow, from: nil)
+            shape.end = convert(event.locationInWindow, from: nil).asFfiPoint()
             commit(shape: shape)
             activeShape = nil
         }
@@ -132,80 +87,78 @@ final class CanvasView: NSView {
         ctx.setShouldAntialias(true)
         ctx.setAllowsAntialiasing(true)
 
-        func draw(stroke: Stroke) {
+        func draw(stroke: FfiStroke) {
             guard let first = stroke.points.first else { return }
             ctx.beginPath()
-            ctx.move(to: first)
+            ctx.move(to: first.asCGPoint())
             for point in stroke.points.dropFirst() {
-                ctx.addLine(to: point)
+                ctx.addLine(to: point.asCGPoint())
             }
-            ctx.setStrokeColor(stroke.color.cgColor)
-            ctx.setLineWidth(stroke.width)
+            ctx.setStrokeColor(stroke.color.asNSColor().cgColor)
+            ctx.setLineWidth(CGFloat(stroke.width))
             ctx.setLineCap(.round)
             ctx.setLineJoin(.round)
             ctx.strokePath()
         }
 
-        func draw(shape: Shape) {
-            let strokeColor = shape.color.cgColor
+        func draw(shape: FfiShape) {
+            let strokeColor = shape.style.strokeColor.asNSColor().cgColor
             ctx.setStrokeColor(strokeColor)
-            ctx.setLineWidth(shape.width)
+            ctx.setLineWidth(CGFloat(shape.style.strokeWidth))
             ctx.setLineCap(.round)
             ctx.setLineJoin(.round)
 
             func fillAndHatch(path: CGPath) {
-                guard shape.fillEnabled else { return }
+                guard shape.style.fillEnabled else { return }
 
                 ctx.saveGState()
                 ctx.addPath(path)
-                ctx.setFillColor(shape.fillColor.cgColor)
+                ctx.setFillColor(shape.style.fillColor.asNSColor().cgColor)
                 ctx.fillPath()
                 ctx.restoreGState()
 
-                guard shape.hatchEnabled else { return }
+                guard shape.style.hatchEnabled else { return }
 
                 ctx.saveGState()
                 ctx.addPath(path)
                 ctx.clip()
-                drawHatch(ctx: ctx, in: path.boundingBox, strokeColor: strokeColor, lineWidth: max(1, shape.width * 0.6))
+                drawHatch(ctx: ctx, in: path.boundingBox, strokeColor: strokeColor, lineWidth: max(1, CGFloat(shape.style.strokeWidth) * 0.6))
                 ctx.restoreGState()
             }
 
             switch shape.kind {
             case .rectangle:
-                let rect = rectFromPoints(a: shape.start, b: shape.end)
+                let rect = rectFromPoints(a: shape.start.asCGPoint(), b: shape.end.asCGPoint())
                 let path = CGPath(rect: rect, transform: nil)
                 fillAndHatch(path: path)
                 ctx.stroke(rect)
 
             case .roundedRectangle:
-                let rect = rectFromPoints(a: shape.start, b: shape.end)
-                let radius = min(shape.cornerRadius, min(rect.width, rect.height) / 2)
+                let rect = rectFromPoints(a: shape.start.asCGPoint(), b: shape.end.asCGPoint())
+                let radius = min(CGFloat(shape.style.cornerRadius), min(rect.width, rect.height) / 2)
                 let path = roundedRectPath(in: rect, radius: radius)
                 fillAndHatch(path: path)
                 ctx.addPath(path)
                 ctx.strokePath()
 
             case .ellipse:
-                let rect = rectFromPoints(a: shape.start, b: shape.end)
+                let rect = rectFromPoints(a: shape.start.asCGPoint(), b: shape.end.asCGPoint())
                 let path = CGPath(ellipseIn: rect, transform: nil)
                 fillAndHatch(path: path)
                 ctx.strokeEllipse(in: rect)
 
             case .arrow:
-                drawArrow(ctx: ctx, start: shape.start, end: shape.end, lineWidth: shape.width, fillColor: strokeColor)
+                drawArrow(ctx: ctx, start: shape.start.asCGPoint(), end: shape.end.asCGPoint(), lineWidth: CGFloat(shape.style.strokeWidth), fillColor: strokeColor)
 
             case .curvedArrow:
-                drawCurvedArrow(ctx: ctx, start: shape.start, end: shape.end, lineWidth: shape.width, strokeColor: strokeColor)
+                drawCurvedArrow(ctx: ctx, start: shape.start.asCGPoint(), end: shape.end.asCGPoint(), lineWidth: CGFloat(shape.style.strokeWidth), strokeColor: strokeColor)
             }
         }
 
-        for item in items {
+        for item in cachedItems {
             switch item {
-            case .stroke(let s):
-                draw(stroke: s)
-            case .shape(let sh):
-                draw(shape: sh)
+            case .stroke(let s): draw(stroke: s)
+            case .shape(let sh): draw(shape: sh)
             }
         }
         if let s = activeStroke {
@@ -217,136 +170,55 @@ final class CanvasView: NSView {
     }
 
     func clearAll() {
-        guard !items.isEmpty else { return }
-        redoStack.removeAll()
-        items.removeAll()
+        document.clearAll()
+        refreshItems()
         setNeedsDisplay(bounds)
     }
 
     func undo() {
-        guard !items.isEmpty else { return }
-        redoStack.append(items)
-        _ = items.popLast()
+        guard document.undo() else { return }
+        refreshItems()
         setNeedsDisplay(bounds)
     }
 
     func redo() {
-        guard let snapshot = redoStack.popLast() else { return }
-        items = snapshot
+        guard document.redo() else { return }
+        refreshItems()
         setNeedsDisplay(bounds)
     }
 
-    private func commit(stroke: Stroke) {
-        redoStack.removeAll()
-        items.append(.stroke(stroke))
+    private func commit(stroke: FfiStroke) {
+        document.commitStroke(stroke: stroke)
+        refreshItems()
         setNeedsDisplay(bounds)
     }
 
-    private func commit(shape: Shape) {
-        redoStack.removeAll()
-        items.append(.shape(shape))
+    private func commit(shape: FfiShape) {
+        document.commitShape(shape: shape)
+        refreshItems()
         setNeedsDisplay(bounds)
     }
 
     private func erase(at point: CGPoint) {
-        guard !items.isEmpty else { return }
-
-        redoStack.removeAll()
-
         let radius = max(8, penWidth * 2)
-        items.removeAll { item in
-            itemIntersectsPoint(item: item, point: point, radius: radius)
-        }
+        guard document.eraseAt(point: point.asFfiPoint(), radius: Float(radius)) else { return }
+        refreshItems()
         setNeedsDisplay(bounds)
     }
 
-    private func itemIntersectsPoint(item: Item, point: CGPoint, radius: CGFloat) -> Bool {
-        switch item {
-        case .stroke(let stroke):
-            return strokeIntersectsPoint(stroke: stroke, point: point, radius: radius)
-        case .shape(let shape):
-            return shapeIntersectsPoint(shape: shape, point: point, radius: radius)
-        }
+    private func refreshItems() {
+        cachedItems = document.items()
     }
 
-    private func strokeIntersectsPoint(stroke: Stroke, point: CGPoint, radius: CGFloat) -> Bool {
-        let r2 = radius * radius
-        let pts = stroke.points
-        if pts.count == 1 {
-            return (pts[0].x - point.x) * (pts[0].x - point.x) + (pts[0].y - point.y) * (pts[0].y - point.y) <= r2
-        }
-        for i in 0..<(pts.count - 1) {
-            if distanceSquaredPointToSegment(p: point, a: pts[i], b: pts[i + 1]) <= r2 {
-                return true
-            }
-        }
-        return false
-    }
-
-    private func shapeIntersectsPoint(shape: Shape, point: CGPoint, radius: CGFloat) -> Bool {
-        let r2 = radius * radius
-
-        switch shape.kind {
-        case .rectangle:
-            let rect = rectFromPoints(a: shape.start, b: shape.end)
-            let tl = CGPoint(x: rect.minX, y: rect.minY)
-            let tr = CGPoint(x: rect.maxX, y: rect.minY)
-            let br = CGPoint(x: rect.maxX, y: rect.maxY)
-            let bl = CGPoint(x: rect.minX, y: rect.maxY)
-            return (
-                distanceSquaredPointToSegment(p: point, a: tl, b: tr) <= r2 ||
-                distanceSquaredPointToSegment(p: point, a: tr, b: br) <= r2 ||
-                distanceSquaredPointToSegment(p: point, a: br, b: bl) <= r2 ||
-                distanceSquaredPointToSegment(p: point, a: bl, b: tl) <= r2
-            )
-
-        case .roundedRectangle:
-            let rect = rectFromPoints(a: shape.start, b: shape.end)
-            let tl = CGPoint(x: rect.minX, y: rect.minY)
-            let tr = CGPoint(x: rect.maxX, y: rect.minY)
-            let br = CGPoint(x: rect.maxX, y: rect.maxY)
-            let bl = CGPoint(x: rect.minX, y: rect.maxY)
-            return (
-                distanceSquaredPointToSegment(p: point, a: tl, b: tr) <= r2 ||
-                distanceSquaredPointToSegment(p: point, a: tr, b: br) <= r2 ||
-                distanceSquaredPointToSegment(p: point, a: br, b: bl) <= r2 ||
-                distanceSquaredPointToSegment(p: point, a: bl, b: tl) <= r2
-            )
-
-        case .ellipse:
-            let rect = rectFromPoints(a: shape.start, b: shape.end)
-            guard rect.width > 1, rect.height > 1 else {
-                return distanceSquaredPointToSegment(p: point, a: shape.start, b: shape.end) <= r2
-            }
-            let cx = rect.midX
-            let cy = rect.midY
-            let a = rect.width / 2
-            let b = rect.height / 2
-            let dx = point.x - cx
-            let dy = point.y - cy
-            let value = (dx * dx) / (a * a) + (dy * dy) / (b * b)
-            // Rough boundary check: treat |value - 1| scaled by min(a,b) as distance.
-            let approxDist = abs(value - 1) * min(a, b)
-            return approxDist * approxDist <= r2
-
-        case .arrow:
-            return distanceSquaredPointToSegment(p: point, a: shape.start, b: shape.end) <= r2
-
-        case .curvedArrow:
-            let samples = approximateQuadraticBezier(
-                start: shape.start,
-                control: controlPointForCurve(start: shape.start, end: shape.end),
-                end: shape.end,
-                steps: 16
-            )
-            guard samples.count >= 2 else { return false }
-            for i in 0..<(samples.count - 1) {
-                if distanceSquaredPointToSegment(p: point, a: samples[i], b: samples[i + 1]) <= r2 {
-                    return true
-                }
-            }
-            return false
-        }
+    private func currentShapeStyle() -> FfiShapeStyle {
+        FfiShapeStyle(
+            strokeColor: penColor.asFfiColor(),
+            strokeWidth: Float(penWidth),
+            fillEnabled: shapeFillEnabled,
+            fillColor: shapeFillColor.asFfiColor(),
+            hatchEnabled: shapeHatchEnabled,
+            cornerRadius: Float(shapeCornerRadius)
+        )
     }
 
     private func rectFromPoints(a: CGPoint, b: CGPoint) -> CGRect {
@@ -546,23 +418,45 @@ final class CanvasView: NSView {
         }
         ctx.restoreGState()
     }
+}
 
-    private func distanceSquaredPointToSegment(p: CGPoint, a: CGPoint, b: CGPoint) -> CGFloat {
-        let abx = b.x - a.x
-        let aby = b.y - a.y
-        let apx = p.x - a.x
-        let apy = p.y - a.y
+private extension CGPoint {
+    func asFfiPoint() -> FfiPoint {
+        FfiPoint(x: Float(x), y: Float(y))
+    }
+}
 
-        let abLen2 = abx * abx + aby * aby
-        if abLen2 <= .leastNonzeroMagnitude {
-            return apx * apx + apy * apy
+private extension FfiPoint {
+    func asCGPoint() -> CGPoint {
+        CGPoint(x: CGFloat(x), y: CGFloat(y))
+    }
+}
+
+private extension NSColor {
+    func asFfiColor() -> FfiColorRgba8 {
+        let c = usingColorSpace(.sRGB) ?? self
+        var r: CGFloat = 0
+        var g: CGFloat = 0
+        var b: CGFloat = 0
+        var a: CGFloat = 0
+        c.getRed(&r, green: &g, blue: &b, alpha: &a)
+
+        func u8(_ v: CGFloat) -> UInt8 {
+            let scaled = Int((v * 255.0).rounded())
+            return UInt8(max(0, min(255, scaled)))
         }
 
-        var t = (apx * abx + apy * aby) / abLen2
-        t = max(0, min(1, t))
-        let closest = CGPoint(x: a.x + t * abx, y: a.y + t * aby)
-        let dx = p.x - closest.x
-        let dy = p.y - closest.y
-        return dx * dx + dy * dy
+        return FfiColorRgba8(r: u8(r), g: u8(g), b: u8(b), a: u8(a))
+    }
+}
+
+private extension FfiColorRgba8 {
+    func asNSColor() -> NSColor {
+        NSColor(
+            srgbRed: CGFloat(r) / 255.0,
+            green: CGFloat(g) / 255.0,
+            blue: CGFloat(b) / 255.0,
+            alpha: CGFloat(a) / 255.0
+        )
     }
 }

@@ -13,7 +13,43 @@
 		A1A000112B00000100000001 /* OverlayWindowManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A000082B00000100000001 /* OverlayWindowManager.swift */; };
 		A1A000122B00000100000001 /* CanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A000092B00000100000001 /* CanvasView.swift */; };
 		A1A000132B00000100000001 /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A0000A2B00000100000001 /* HotkeyManager.swift */; };
+		A1A000262B00000100000001 /* overlay_scribe_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A000212B00000100000001 /* overlay_scribe_ffi.swift */; };
+		A1A000272B00000100000001 /* liboverlay_scribe_ffi.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = A1A000222B00000100000001 /* liboverlay_scribe_ffi.dylib */; };
+		A1A000282B00000100000001 /* liboverlay_scribe_ffi.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = A1A000222B00000100000001 /* liboverlay_scribe_ffi.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A1A000242B00000100000001 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				A1A000282B00000100000001 /* liboverlay_scribe_ffi.dylib in Embed Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A1A000252B00000100000001 /* Generate UniFFI bindings */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Generated/OverlayScribeCore/overlay_scribe_ffi.swift",
+				"$(SRCROOT)/Generated/OverlayScribeCore/overlay_scribe_ffiFFI.h",
+				"$(SRCROOT)/Generated/OverlayScribeCore/liboverlay_scribe_ffi.dylib",
+			);
+			showEnvVarsInLog = 0;
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\n\n\"${SRCROOT}/../../../scripts/gen-bindings.sh\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A1A000012B00000100000001 /* OverlayScribe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OverlayScribe.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -24,6 +60,11 @@
 		A1A000082B00000100000001 /* OverlayWindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayWindowManager.swift; sourceTree = "<group>"; };
 		A1A000092B00000100000001 /* CanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasView.swift; sourceTree = "<group>"; };
 		A1A0000A2B00000100000001 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
+		A1A000202B00000100000001 /* OverlayScribe-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "OverlayScribe-Bridging-Header.h"; sourceTree = "<group>"; };
+		A1A000212B00000100000001 /* overlay_scribe_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = overlay_scribe_ffi.swift; sourceTree = "<group>"; };
+		A1A000222B00000100000001 /* liboverlay_scribe_ffi.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; path = liboverlay_scribe_ffi.dylib; sourceTree = "<group>"; };
+		A1A000232B00000100000001 /* overlay_scribe_ffiFFI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = overlay_scribe_ffiFFI.h; sourceTree = "<group>"; };
+		A1A000292B00000100000001 /* overlay_scribe_ffiFFI.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = overlay_scribe_ffiFFI.modulemap; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -31,6 +72,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1A000272B00000100000001 /* liboverlay_scribe_ffi.dylib in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -41,6 +83,7 @@
 			isa = PBXGroup;
 			children = (
 				A1A000032B00000100000001 /* OverlayScribe */,
+				A1A0002A2B00000100000001 /* Generated */,
 				A1A0001F2B00000100000001 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -55,8 +98,21 @@
 				A1A000082B00000100000001 /* OverlayWindowManager.swift */,
 				A1A000092B00000100000001 /* CanvasView.swift */,
 				A1A0000A2B00000100000001 /* HotkeyManager.swift */,
+				A1A000202B00000100000001 /* OverlayScribe-Bridging-Header.h */,
 			);
 			path = OverlayScribe;
+			sourceTree = "<group>";
+		};
+		A1A0002A2B00000100000001 /* Generated */ = {
+			isa = PBXGroup;
+			children = (
+				A1A000212B00000100000001 /* overlay_scribe_ffi.swift */,
+				A1A000232B00000100000001 /* overlay_scribe_ffiFFI.h */,
+				A1A000292B00000100000001 /* overlay_scribe_ffiFFI.modulemap */,
+				A1A000222B00000100000001 /* liboverlay_scribe_ffi.dylib */,
+			);
+			name = Generated;
+			path = Generated/OverlayScribeCore;
 			sourceTree = "<group>";
 		};
 		A1A0001F2B00000100000001 /* Products */ = {
@@ -74,8 +130,10 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1A0001A2B00000100000001 /* Build configuration list for PBXNativeTarget "OverlayScribe" */;
 			buildPhases = (
+				A1A000252B00000100000001 /* Generate UniFFI bindings */,
 				A1A000152B00000100000001 /* Sources */,
 				A1A0000B2B00000100000001 /* Frameworks */,
+				A1A000242B00000100000001 /* Embed Frameworks */,
 				A1A000162B00000100000001 /* Resources */,
 			);
 			buildRules = (
@@ -135,6 +193,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1A000262B00000100000001 /* overlay_scribe_ffi.swift in Sources */,
 				A1A0000E2B00000100000001 /* OverlayScribeApp.swift in Sources */,
 				A1A0000F2B00000100000001 /* StatusMenuView.swift in Sources */,
 				A1A000102B00000100000001 /* OverlayState.swift in Sources */,
@@ -158,6 +217,10 @@
 				DEAD_CODE_STRIPPING = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				INFOPLIST_FILE = OverlayScribe/Info.plist;
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Generated/OverlayScribeCore",
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -165,6 +228,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.OverlayScribe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OBJC_BRIDGING_HEADER = "OverlayScribe/OverlayScribe-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Debug;
@@ -180,6 +244,10 @@
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = NO;
 				INFOPLIST_FILE = OverlayScribe/Info.plist;
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/Generated/OverlayScribeCore",
+				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -187,6 +255,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.OverlayScribe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OBJC_BRIDGING_HEADER = "OverlayScribe/OverlayScribe-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 			};
 			name = Release;

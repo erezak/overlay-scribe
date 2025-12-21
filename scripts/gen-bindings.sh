@@ -24,4 +24,7 @@ cargo run -p overlay_scribe_ffi --release --bin uniffi-bindgen -- \
   --language swift \
   --out-dir "$out_dir"
 
+echo "==> Copying dylib into Generated output"
+cp -f "$lib_path" "$out_dir/"
+
 echo "==> Done. Swift bindings in: $out_dir"
