@@ -13,3 +13,7 @@ target/
 **/*.xcworkspace/
 
 apps/macos/OverlayScribe/Generated/
+
+*.log
+*.tail
+*.exit

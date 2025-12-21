@@ -42,32 +42,22 @@ pub struct ShapeStyle {
     pub corner_radius: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TextAlignH {
     Left,
+    #[default]
     Center,
     Right,
 }
 
-impl Default for TextAlignH {
-    fn default() -> Self {
-        Self::Center
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TextAlignV {
     Top,
+    #[default]
     Middle,
     Bottom,
-}
-
-impl Default for TextAlignV {
-    fn default() -> Self {
-        Self::Middle
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
