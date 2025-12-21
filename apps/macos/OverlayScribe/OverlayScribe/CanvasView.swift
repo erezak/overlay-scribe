@@ -147,6 +147,18 @@ final class CanvasView: NSView, NSTextViewDelegate {
         case .rectangle, .roundedRectangle, .ellipse, .arrow, .curvedArrow:
             if activeShape != nil {
                 activeShape?.end = p.asFfiPoint()
+
+                // While drawing arrows, update endpoint attachments live so the arrow
+                // visually “sticks” as the cursor moves over shapes.
+                if activeShape?.kind == .arrow || activeShape?.kind == .curvedArrow {
+                    if let hit = hitTestClosedShape(at: p) {
+                        activeShape?.endAttachId = hit.shape.id
+                        activeShape?.endAttachUv = attachmentUv(point: p, in: hit.rect)
+                    } else {
+                        activeShape?.endAttachId = nil
+                        activeShape?.endAttachUv = nil
+                    }
+                }
                 setNeedsDisplay(bounds)
             }
         }
@@ -186,6 +198,17 @@ final class CanvasView: NSView, NSTextViewDelegate {
 
         if var shape = activeShape {
             shape.end = p.asFfiPoint()
+
+            if shape.kind == .arrow || shape.kind == .curvedArrow {
+                // Finalize endpoint attachments when the arrow is released.
+                if let hit = hitTestClosedShape(at: p) {
+                    shape.endAttachId = hit.shape.id
+                    shape.endAttachUv = attachmentUv(point: p, in: hit.rect)
+                } else {
+                    shape.endAttachId = nil
+                    shape.endAttachUv = nil
+                }
+            }
             commit(shape: shape)
             return
         }
@@ -262,10 +285,24 @@ final class CanvasView: NSView, NSTextViewDelegate {
                 drawShapeTextIfNeeded(shape, in: rect, clipPath: path)
 
             case .arrow:
-                drawArrow(ctx: ctx, start: shape.start.asCGPoint(), end: shape.end.asCGPoint(), lineWidth: CGFloat(shape.style.strokeWidth), fillColor: strokeColor)
+                let (start, end) = resolvedArrowEndpoints(for: shape)
+                drawArrow(ctx: ctx, start: start, end: end, lineWidth: CGFloat(shape.style.strokeWidth), fillColor: strokeColor)
 
             case .curvedArrow:
-                drawCurvedArrow(ctx: ctx, start: shape.start.asCGPoint(), end: shape.end.asCGPoint(), lineWidth: CGFloat(shape.style.strokeWidth), strokeColor: strokeColor)
+                let (start, end) = resolvedArrowEndpoints(for: shape)
+                let avoid = attachedClosedShapes(for: shape)
+                let prefer = preferredCurvedArrowVerticalBend(for: shape, start: start, end: end)
+                let obstacles = allClosedShapes()
+                drawCurvedArrow(
+                    ctx: ctx,
+                    start: start,
+                    end: end,
+                    lineWidth: CGFloat(shape.style.strokeWidth),
+                    strokeColor: strokeColor,
+                    attached: avoid,
+                    obstacles: obstacles,
+                    preferredVerticalBend: prefer
+                )
             }
 
             if selectedShapeId == shape.id {
@@ -355,9 +392,208 @@ final class CanvasView: NSView, NSTextViewDelegate {
             activeShape = document.beginShape(kind: .ellipse, style: currentShapeStyle(), start: start.asFfiPoint())
         case .arrow:
             activeShape = document.beginShape(kind: .arrow, style: currentShapeStyle(), start: start.asFfiPoint())
+            if let hit = hitTestClosedShape(at: start) {
+                activeShape?.startAttachId = hit.shape.id
+                activeShape?.startAttachUv = attachmentUv(point: start, in: hit.rect)
+            }
         case .curvedArrow:
             activeShape = document.beginShape(kind: .curvedArrow, style: currentShapeStyle(), start: start.asFfiPoint())
+            if let hit = hitTestClosedShape(at: start) {
+                activeShape?.startAttachId = hit.shape.id
+                activeShape?.startAttachUv = attachmentUv(point: start, in: hit.rect)
+            }
         }
+    }
+
+    private func resolvedArrowEndpoints(for shape: FfiShape) -> (start: CGPoint, end: CGPoint) {
+        var start = shape.start.asCGPoint()
+        var end = shape.end.asCGPoint()
+
+        if let startAttachId = shape.startAttachId,
+           let target = closedShapeById(startAttachId)
+        {
+            if let uv = shape.startAttachUv {
+                start = anchorPoint(on: target, uv: uv.asCGPoint())
+            } else {
+                // Back-compat: older docs may have id without uv.
+                start = anchorPoint(on: target, toward: end)
+            }
+        }
+
+        if let endAttachId = shape.endAttachId,
+           let target = closedShapeById(endAttachId)
+        {
+            if let uv = shape.endAttachUv {
+                end = anchorPoint(on: target, uv: uv.asCGPoint())
+            } else {
+                end = anchorPoint(on: target, toward: start)
+            }
+        }
+
+        return (start, end)
+    }
+
+    private func attachmentUv(point: CGPoint, in rect: CGRect) -> FfiPoint {
+        let w = max(1e-6, rect.width)
+        let h = max(1e-6, rect.height)
+        let u = min(1, max(0, (point.x - rect.minX) / w))
+        let v = min(1, max(0, (point.y - rect.minY) / h))
+        return FfiPoint(x: Float(u), y: Float(v))
+    }
+
+    private func attachedClosedShapes(for shape: FfiShape) -> [ShapeHit] {
+        var hits: [ShapeHit] = []
+        if let startAttachId = shape.startAttachId, let hit = closedShapeById(startAttachId) {
+            hits.append(hit)
+        }
+        if let endAttachId = shape.endAttachId,
+           let hit = closedShapeById(endAttachId),
+           !hits.contains(where: { $0.shape.id == hit.shape.id })
+        {
+            hits.append(hit)
+        }
+        return hits
+    }
+
+    private func allClosedShapes() -> [ShapeHit] {
+        var hits: [ShapeHit] = []
+        for item in cachedItems {
+            guard case .shape(let shape) = item else { continue }
+            guard isClosedShape(shape.kind) else { continue }
+            let (rect, path) = shapePathAndRect(for: shape)
+            if let path {
+                hits.append(ShapeHit(shape: shape, rect: rect, path: path, isClosed: true))
+            }
+        }
+        return hits
+    }
+
+    private enum PreferredVerticalBend {
+        case up
+        case down
+    }
+
+    private func preferredCurvedArrowVerticalBend(for shape: FfiShape, start: CGPoint, end: CGPoint) -> PreferredVerticalBend? {
+        // Heuristic: if endpoints attach to the top of shapes, prefer an "n" (arch upward).
+        // If endpoints attach to the bottom, prefer a "u" (arch downward).
+        // Note: CanvasView is flipped (y increases downward), so "up" means smaller y.
+
+        var dySum: CGFloat = 0
+        var count: CGFloat = 0
+
+        if let startAttachId = shape.startAttachId, let hit = closedShapeById(startAttachId) {
+            let c = CGPoint(x: hit.rect.midX, y: hit.rect.midY)
+            dySum += (start.y - c.y)
+            count += 1
+        }
+        if let endAttachId = shape.endAttachId, let hit = closedShapeById(endAttachId) {
+            let c = CGPoint(x: hit.rect.midX, y: hit.rect.midY)
+            dySum += (end.y - c.y)
+            count += 1
+        }
+
+        guard count > 0 else { return nil }
+        let avgDy = dySum / count
+
+        // Require a small bias to avoid jitter when near center.
+        if avgDy <= -8 {
+            return .up
+        }
+        if avgDy >= 8 {
+            return .down
+        }
+        return nil
+    }
+
+    private func closedShapeById(_ id: UInt64) -> ShapeHit? {
+        for item in cachedItems.reversed() {
+            guard case .shape(let shape) = item else { continue }
+            guard shape.id == id else { continue }
+            guard isClosedShape(shape.kind) else { continue }
+            let (rect, path) = shapePathAndRect(for: shape)
+            return ShapeHit(shape: shape, rect: rect, path: path, isClosed: true)
+        }
+        return nil
+    }
+
+    private func anchorPoint(on target: ShapeHit, toward other: CGPoint) -> CGPoint {
+        let rect = target.rect
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let dx = other.x - center.x
+        let dy = other.y - center.y
+        let len2 = dx * dx + dy * dy
+        if len2 <= 0.0001 {
+            // Degenerate direction: fall back to center.
+            return center
+        }
+
+        switch target.shape.kind {
+        case .ellipse:
+            return intersectEllipse(rect: rect, center: center, dx: dx, dy: dy)
+        case .rectangle, .roundedRectangle:
+            return intersectRect(rect: rect, center: center, dx: dx, dy: dy)
+        case .arrow, .curvedArrow:
+            return center
+        }
+    }
+
+    private func anchorPoint(on target: ShapeHit, uv: CGPoint) -> CGPoint {
+        // Use the user’s drop point direction (from shape center toward the stored uv) to
+        // resolve a stable boundary point. This preserves the exact connection point and
+        // prevents “jumping” when the curve direction changes.
+        let rect = target.rect
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+
+        let local = CGPoint(
+            x: rect.minX + uv.x * rect.width,
+            y: rect.minY + uv.y * rect.height
+        )
+
+        let dx = local.x - center.x
+        let dy = local.y - center.y
+        let len2 = dx * dx + dy * dy
+        if len2 <= 0.0001 {
+            return center
+        }
+
+        switch target.shape.kind {
+        case .ellipse:
+            return intersectEllipse(rect: rect, center: center, dx: dx, dy: dy)
+        case .rectangle, .roundedRectangle:
+            return intersectRect(rect: rect, center: center, dx: dx, dy: dy)
+        case .arrow, .curvedArrow:
+            return center
+        }
+    }
+
+    private func intersectEllipse(rect: CGRect, center: CGPoint, dx: CGFloat, dy: CGFloat) -> CGPoint {
+        let rx = max(1e-3, rect.width / 2)
+        let ry = max(1e-3, rect.height / 2)
+        // Scale (dx,dy) to the ellipse boundary.
+        let sx = abs(dx) / rx
+        let sy = abs(dy) / ry
+        let scale = max(sx, sy)
+        if scale <= 1e-6 {
+            return center
+        }
+        return CGPoint(x: center.x + dx / scale, y: center.y + dy / scale)
+    }
+
+    private func intersectRect(rect: CGRect, center: CGPoint, dx: CGFloat, dy: CGFloat) -> CGPoint {
+        // Ray from center in direction (dx,dy) intersects the rect boundary.
+        let hx = rect.width / 2
+        let hy = rect.height / 2
+        let adx = abs(dx)
+        let ady = abs(dy)
+        if adx <= 1e-6 && ady <= 1e-6 {
+            return center
+        }
+
+        // Compute scale to hit the boundary.
+        let sx = hx / max(1e-6, adx)
+        let sy = hy / max(1e-6, ady)
+        let s = min(sx, sy)
+        return CGPoint(x: center.x + dx * s, y: center.y + dy * s)
     }
 
     private struct ShapeHit {
@@ -795,13 +1031,37 @@ final class CanvasView: NSView, NSTextViewDelegate {
         ctx.fillPath()
     }
 
-    private func drawCurvedArrow(ctx: CGContext, start: CGPoint, end: CGPoint, lineWidth: CGFloat, strokeColor: CGColor) {
+    private func drawCurvedArrow(
+        ctx: CGContext,
+        start: CGPoint,
+        end: CGPoint,
+        lineWidth: CGFloat,
+        strokeColor: CGColor,
+        attached: [ShapeHit] = [],
+        obstacles: [ShapeHit] = [],
+        preferredVerticalBend: PreferredVerticalBend? = nil
+    ) {
         let dx = end.x - start.x
         let dy = end.y - start.y
         let len = sqrt(dx * dx + dy * dy)
         guard len > 0.5 else { return }
 
-        let control = controlPointForCurve(start: start, end: end)
+        let quadControl = controlPointForCurve(
+            start: start,
+            end: end,
+            attached: attached,
+            obstacles: obstacles,
+            preferredVerticalBend: preferredVerticalBend
+        )
+
+        let path = chooseCurvedArrowPath(
+            start: start,
+            end: end,
+            quadControl: quadControl,
+            attached: attached,
+            obstacles: obstacles,
+            preferredVerticalBend: preferredVerticalBend
+        )
 
         ctx.saveGState()
         ctx.setStrokeColor(strokeColor)
@@ -811,13 +1071,27 @@ final class CanvasView: NSView, NSTextViewDelegate {
 
         ctx.beginPath()
         ctx.move(to: start)
-        ctx.addQuadCurve(to: end, control: control)
+
+        switch path {
+        case .quadratic(let c):
+            ctx.addQuadCurve(to: end, control: c)
+        case .cubic(let c1, let c2):
+            ctx.addCurve(to: end, control1: c1, control2: c2)
+        }
         ctx.strokePath()
         ctx.restoreGState()
 
-        // Arrowhead: align to the tangent at the end of the quadratic.
-        let tx = end.x - control.x
-        let ty = end.y - control.y
+        // Arrowhead: align to the tangent at the end.
+        let (tx, ty): (CGFloat, CGFloat)
+        switch path {
+        case .quadratic(let c):
+            tx = end.x - c.x
+            ty = end.y - c.y
+        case .cubic(_, let c2):
+            // Cubic derivative at t=1 is 3*(end - c2); scale irrelevant.
+            tx = end.x - c2.x
+            ty = end.y - c2.y
+        }
         let tlen = sqrt(tx * tx + ty * ty)
         guard tlen > 0.5 else { return }
         let ux = tx / tlen
@@ -841,7 +1115,300 @@ final class CanvasView: NSView, NSTextViewDelegate {
         ctx.restoreGState()
     }
 
-    private func controlPointForCurve(start: CGPoint, end: CGPoint) -> CGPoint {
+    private enum CurvedArrowPath {
+        case quadratic(CGPoint)
+        case cubic(CGPoint, CGPoint)
+    }
+
+    private func chooseCurvedArrowPath(
+        start: CGPoint,
+        end: CGPoint,
+        quadControl: CGPoint,
+        attached: [ShapeHit],
+        obstacles: [ShapeHit],
+        preferredVerticalBend: PreferredVerticalBend?
+    ) -> CurvedArrowPath {
+        // If the best quadratic doesn't cross anything, keep it.
+        let quadHit = curveHitInfoQuadratic(start: start, control: quadControl, end: end, attached: attached, obstacles: obstacles)
+        if quadHit.totalInsideHits == 0 {
+            return .quadratic(quadControl)
+        }
+
+        // Otherwise, try a cubic routed via waypoints around the worst offenders.
+        // This enables a “double bend” (S-curve) which a single quadratic can't express.
+        let orderedObstacles = quadHit.obstaclesBySeverity
+        let candidates = waypointCandidates(start: start, end: end, obstacles: orderedObstacles, preferredVerticalBend: preferredVerticalBend)
+        if candidates.isEmpty {
+            return .quadratic(quadControl)
+        }
+
+        var best: (path: CurvedArrowPath, hits: Int, score: Double)?
+        for w in candidates {
+            // Evaluate a couple control-point strategies for the same waypoint.
+            let controlPairs: [(CGPoint, CGPoint)] = [
+                cubicControlsThroughWaypointMidpoint(start: start, end: end, waypoint: w),
+                cubicControlsPullTowardWaypoint(start: start, end: end, waypoint: w)
+            ]
+            for (c1, c2) in controlPairs {
+                let insideHits = curveHitInfoCubic(start: start, c1: c1, c2: c2, end: end, attached: attached, obstacles: obstacles)
+                // Primary objective: don't go through shapes. Secondary: keep it reasonably short / consistent.
+                let lengthScore = Double(hypot(c1.x - start.x, c1.y - start.y) + hypot(c2.x - end.x, c2.y - end.y))
+                var score = lengthScore
+                if let preferredVerticalBend {
+                    let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+                    let pm = pointAtCubic(start: start, c1: c1, c2: c2, end: end, t: 0.5)
+                    let wantsUp = (preferredVerticalBend == .up)
+                    let isUp = pm.y < mid.y
+                    if wantsUp != isUp {
+                        score += 200
+                    }
+                }
+
+                if best == nil || insideHits < best!.hits || (insideHits == best!.hits && score < best!.score) {
+                    best = (.cubic(c1, c2), insideHits, score)
+                    if insideHits == 0 {
+                        // Early exit: first non-intersecting path is good enough.
+                        return best!.path
+                    }
+                }
+            }
+        }
+
+        // Prefer a best-effort cubic if it improves intersection count vs the quadratic.
+        if let best, best.hits < quadHit.totalInsideHits {
+            return best.path
+        }
+
+        return .quadratic(quadControl)
+    }
+
+    private func waypointCandidates(
+        start: CGPoint,
+        end: CGPoint,
+        obstacles: [ShapeHit],
+        preferredVerticalBend: PreferredVerticalBend?
+    ) -> [CGPoint] {
+        let margin: CGFloat = 26
+        let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+        let primary = Array(obstacles.prefix(6))
+
+        var points: [CGPoint] = []
+        var unionRect: CGRect?
+        for hit in primary {
+            let r = hit.rect.insetBy(dx: -margin, dy: -margin)
+            unionRect = unionRect.map { $0.union(r) } ?? r
+
+            // Midpoints around the obstacle.
+            points.append(CGPoint(x: r.midX, y: r.minY - margin))
+            points.append(CGPoint(x: r.midX, y: r.maxY + margin))
+            points.append(CGPoint(x: r.minX - margin, y: r.midY))
+            points.append(CGPoint(x: r.maxX + margin, y: r.midY))
+
+            // Corners around the obstacle (useful when the curve needs to go around a corner).
+            points.append(CGPoint(x: r.minX - margin, y: r.minY - margin))
+            points.append(CGPoint(x: r.maxX + margin, y: r.minY - margin))
+            points.append(CGPoint(x: r.minX - margin, y: r.maxY + margin))
+            points.append(CGPoint(x: r.maxX + margin, y: r.maxY + margin))
+
+            // Midline-aligned options to keep the curve centered when possible.
+            points.append(CGPoint(x: mid.x, y: r.minY - margin))
+            points.append(CGPoint(x: mid.x, y: r.maxY + margin))
+        }
+
+        // Also try routing around the combined bounds of the biggest offenders.
+        if let unionRect {
+            let r = unionRect
+            points.append(CGPoint(x: r.midX, y: r.minY - margin * 2))
+            points.append(CGPoint(x: r.midX, y: r.maxY + margin * 2))
+            points.append(CGPoint(x: r.minX - margin * 2, y: r.midY))
+            points.append(CGPoint(x: r.maxX + margin * 2, y: r.midY))
+        }
+
+        func isValid(_ p: CGPoint) -> Bool {
+            for hit in obstacles {
+                if hit.rect.insetBy(dx: -margin, dy: -margin).contains(p) {
+                    return false
+                }
+            }
+            return true
+        }
+
+        var filtered = points.filter(isValid)
+
+        // Rank by polyline length (start->p->end) plus an optional bend preference.
+        func candidateScore(_ p: CGPoint) -> Double {
+            let len = hypot(p.x - start.x, p.y - start.y) + hypot(end.x - p.x, end.y - p.y)
+            var score = Double(len)
+            if let preferredVerticalBend {
+                let wantsUp = (preferredVerticalBend == .up)
+                let isUp = p.y < mid.y
+                if wantsUp != isUp {
+                    score += 250
+                }
+            }
+            return score
+        }
+        filtered.sort(by: { candidateScore($0) < candidateScore($1) })
+
+        // Dedup-ish and cap to keep per-frame work bounded.
+        var out: [CGPoint] = []
+        for p in filtered {
+            if !out.contains(where: { hypot($0.x - p.x, $0.y - p.y) < 3.0 }) {
+                out.append(p)
+                if out.count >= 24 { break }
+            }
+        }
+        return out
+    }
+
+    private func cubicControlsThroughWaypointMidpoint(start: CGPoint, end: CGPoint, waypoint: CGPoint) -> (CGPoint, CGPoint) {
+        // Choose control points so the cubic passes through `waypoint` at t=0.5.
+        // With symmetric construction, k=4/3 satisfies B(0.5)=waypoint for any waypoint.
+        let k: CGFloat = 4.0 / 3.0
+        let c1 = CGPoint(x: start.x + (waypoint.x - start.x) * k, y: start.y + (waypoint.y - start.y) * k)
+        let c2 = CGPoint(x: end.x + (waypoint.x - end.x) * k, y: end.y + (waypoint.y - end.y) * k)
+        return (c1, c2)
+    }
+
+    private func cubicControlsPullTowardWaypoint(start: CGPoint, end: CGPoint, waypoint: CGPoint) -> (CGPoint, CGPoint) {
+        // Pull both control points toward the waypoint to produce an S-curve (does not guarantee passing through).
+        let d1 = hypot(waypoint.x - start.x, waypoint.y - start.y)
+        let d2 = hypot(waypoint.x - end.x, waypoint.y - end.y)
+        let d = max(1e-3, d1 + d2)
+        let a: CGFloat = min(0.78, max(0.50, d / (d + 140)))
+        let c1 = CGPoint(x: start.x + (waypoint.x - start.x) * a, y: start.y + (waypoint.y - start.y) * a)
+        let c2 = CGPoint(x: end.x + (waypoint.x - end.x) * a, y: end.y + (waypoint.y - end.y) * a)
+        return (c1, c2)
+    }
+
+    private func curveHitInfoQuadratic(
+        start: CGPoint,
+        control: CGPoint,
+        end: CGPoint,
+        attached: [ShapeHit],
+        obstacles: [ShapeHit]
+    ) -> (totalInsideHits: Int, obstaclesBySeverity: [ShapeHit]) {
+        let attachedIds = Set(attached.map { $0.shape.id })
+        let (hitsById, total) = sampleCurveHits(
+            attachedIds: attachedIds,
+            obstacles: obstacles,
+            isAllowedAttachedPoint: { pt in
+                let endpointAllowance: CGFloat = 14
+                if hypot(pt.x - start.x, pt.y - start.y) <= endpointAllowance { return true }
+                if hypot(pt.x - end.x, pt.y - end.y) <= endpointAllowance { return true }
+                return false
+            },
+            pointAt: { t in
+                let mt: CGFloat = 1 - t
+                let a = mt * mt
+                let b = 2 * mt * t
+                let c = t * t
+                return CGPoint(
+                    x: a * start.x + b * control.x + c * end.x,
+                    y: a * start.y + b * control.y + c * end.y
+                )
+            }
+        )
+        let ordered = obstacles.sorted {
+            hitsById[$0.shape.id, default: 0] > hitsById[$1.shape.id, default: 0]
+        }
+        return (total, ordered)
+    }
+
+    private func curveHitInfoCubic(
+        start: CGPoint,
+        c1: CGPoint,
+        c2: CGPoint,
+        end: CGPoint,
+        attached: [ShapeHit],
+        obstacles: [ShapeHit]
+    ) -> Int {
+        let attachedIds = Set(attached.map { $0.shape.id })
+        let (_, total) = sampleCurveHits(
+            attachedIds: attachedIds,
+            obstacles: obstacles,
+            isAllowedAttachedPoint: { pt in
+                let endpointAllowance: CGFloat = 14
+                if hypot(pt.x - start.x, pt.y - start.y) <= endpointAllowance { return true }
+                if hypot(pt.x - end.x, pt.y - end.y) <= endpointAllowance { return true }
+                return false
+            },
+            pointAt: { t in
+                pointAtCubic(start: start, c1: c1, c2: c2, end: end, t: t)
+            }
+        )
+        return total
+    }
+
+    private func sampleCurveHits(
+        attachedIds: Set<UInt64>,
+        obstacles: [ShapeHit],
+        isAllowedAttachedPoint: (CGPoint) -> Bool = { _ in false },
+        pointAt: (CGFloat) -> CGPoint
+    ) -> (hitsById: [UInt64: Int], totalInsideHits: Int) {
+        let margin: CGFloat = 18
+        let steps = 1600
+        var hitsById: [UInt64: Int] = [:]
+        var total = 0
+
+        let expanded: [(id: UInt64, rect: CGRect, path: CGPath?)] = obstacles.compactMap {
+            guard let path = $0.path else { return nil }
+            return ($0.shape.id, $0.rect.insetBy(dx: -margin, dy: -margin), path)
+        }
+
+        var prev = pointAt(0)
+        for i in 1...steps {
+            let t = CGFloat(i) / CGFloat(steps)
+            let p = pointAt(t)
+            let midp = CGPoint(x: (prev.x + p.x) / 2, y: (prev.y + p.y) / 2)
+            let q1 = CGPoint(x: prev.x + (p.x - prev.x) * 0.25, y: prev.y + (p.y - prev.y) * 0.25)
+            let q3 = CGPoint(x: prev.x + (p.x - prev.x) * 0.75, y: prev.y + (p.y - prev.y) * 0.75)
+
+            for (id, rect, path) in expanded {
+                guard rect.contains(p) || rect.contains(midp) || rect.contains(q1) || rect.contains(q3) else { continue }
+
+                func check(_ pt: CGPoint) {
+                    if attachedIds.contains(id) && isAllowedAttachedPoint(pt) {
+                        return
+                    }
+                    guard rect.contains(pt) else { return }
+                    if path?.contains(pt) == true {
+                        total += 1
+                        hitsById[id, default: 0] += 1
+                    }
+                }
+
+                check(p)
+                check(midp)
+                check(q1)
+                check(q3)
+            }
+
+            prev = p
+        }
+
+        return (hitsById, total)
+    }
+
+    private func pointAtCubic(start: CGPoint, c1: CGPoint, c2: CGPoint, end: CGPoint, t: CGFloat) -> CGPoint {
+        let mt: CGFloat = 1 - t
+        let a = mt * mt * mt
+        let b = 3 * mt * mt * t
+        let c = 3 * mt * t * t
+        let d = t * t * t
+        return CGPoint(
+            x: a * start.x + b * c1.x + c * c2.x + d * end.x,
+            y: a * start.y + b * c1.y + c * c2.y + d * end.y
+        )
+    }
+
+    private func controlPointForCurve(
+        start: CGPoint,
+        end: CGPoint,
+        attached: [ShapeHit],
+        obstacles: [ShapeHit],
+        preferredVerticalBend: PreferredVerticalBend?
+    ) -> CGPoint {
         let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
         let dx = end.x - start.x
         let dy = end.y - start.y
@@ -852,10 +1419,173 @@ final class CanvasView: NSView, NSTextViewDelegate {
         let uy = dy / len
         let perp = CGPoint(x: -uy, y: ux)
 
-        // Pick a stable side for the curve.
-        let sign: CGFloat = (dx * dy >= 0) ? 1 : -1
         let magnitude = min(160, max(18, len * 0.22))
-        return CGPoint(x: mid.x + perp.x * magnitude * sign, y: mid.y + perp.y * magnitude * sign)
+
+        // For attached curved arrows, choose a bend direction that doesn't curve *through*
+        // either connected shape. This prevents apparent "wrong" flips when endpoints snap
+        // to shape boundaries.
+        func candidate(_ sign: CGFloat) -> CGPoint {
+            CGPoint(x: mid.x + perp.x * magnitude * sign, y: mid.y + perp.y * magnitude * sign)
+        }
+
+        // Keep the previous behavior when not attached and there are no obstacles.
+        if attached.isEmpty && obstacles.isEmpty && preferredVerticalBend == nil {
+            let sign: CGFloat = (dx * dy >= 0) ? 1 : -1
+            return candidate(sign)
+        }
+
+        let attachedIds = Set(attached.map { $0.shape.id })
+
+        func contains(_ hit: ShapeHit, _ point: CGPoint) -> Bool {
+            // Cheap AABB reject before the expensive path test.
+            guard hit.rect.contains(point) else { return false }
+            return hit.path?.contains(point) == true
+        }
+
+        func expandedRectPenalty(_ hit: ShapeHit, _ point: CGPoint) -> Double {
+            // Soft penalty to encourage clearance around shapes.
+            // Note: we only have accurate paths for the base shape; for clearance we use
+            // a simple expanded AABB, which is conservative and cheap.
+            let margin: CGFloat = 10
+            if hit.rect.insetBy(dx: -margin, dy: -margin).contains(point) {
+                return 1
+            }
+            return 0
+        }
+
+        func score(control: CGPoint) -> Double {
+            var score: Double = 0
+
+            // Prefer bend direction ("n" vs "u") when attachments imply a top/bottom connection.
+            if let preferredVerticalBend {
+                let wantsUp = (preferredVerticalBend == .up)
+                let isUp = control.y < mid.y
+                if wantsUp != isUp {
+                    score += 40
+                }
+            }
+
+            // Penalize having the control point inside any closed shape.
+            if obstacles.contains(where: { contains($0, control) }) {
+                score += 800
+            }
+
+            // Sample the curve and penalize any crossings.
+            // Use dense sampling + extra sub-samples per segment to avoid missing thin intersections.
+            let steps = max(80, min(1200, Int(len / 3)))
+            var insideHits = 0
+            var nearHits = 0
+
+            func pointAt(_ t: CGFloat) -> CGPoint {
+                let mt: CGFloat = 1 - t
+                let a = mt * mt
+                let b = 2 * mt * t
+                let c = t * t
+                return CGPoint(
+                    x: a * start.x + b * control.x + c * end.x,
+                    y: a * start.y + b * control.y + c * end.y
+                )
+            }
+
+            // Precompute expanded rects for cheap near/clearance checks.
+            let margin: CGFloat = 10
+            let expandedRects: [(id: UInt64, rect: CGRect, path: CGPath?)] = obstacles.compactMap {
+                guard let path = $0.path else { return nil }
+                return (id: $0.shape.id, rect: $0.rect.insetBy(dx: -margin, dy: -margin), path: path)
+            }
+
+            var prev = pointAt(0)
+            for i in 1...steps {
+                let t = CGFloat(i) / CGFloat(steps)
+                let p = pointAt(t)
+                let midp = CGPoint(x: (prev.x + p.x) / 2, y: (prev.y + p.y) / 2)
+                let q1 = CGPoint(x: prev.x + (p.x - prev.x) * 0.25, y: prev.y + (p.y - prev.y) * 0.25)
+                let q3 = CGPoint(x: prev.x + (p.x - prev.x) * 0.75, y: prev.y + (p.y - prev.y) * 0.75)
+
+                // Allow touching attached shapes only in a tight neighborhood around the endpoints.
+                let endpointAllowance: CGFloat = 14
+                func isAllowedAttachedPoint(_ pt: CGPoint) -> Bool {
+                    if hypot(pt.x - start.x, pt.y - start.y) <= endpointAllowance { return true }
+                    if hypot(pt.x - end.x, pt.y - end.y) <= endpointAllowance { return true }
+                    return false
+                }
+
+                for hit in expandedRects {
+                    let isAttached = attachedIds.contains(hit.id)
+
+                    func countNear(_ pt: CGPoint) {
+                        if isAttached && isAllowedAttachedPoint(pt) { return }
+                        if hit.rect.contains(pt) { nearHits += 1 }
+                    }
+                    // Clearance penalty first (cheap).
+                    countNear(p)
+                    countNear(midp)
+                    countNear(q1)
+                    countNear(q3)
+
+                    // Intersection penalty (path contains). Only attempt if point is in expanded rect.
+                    func pathContains(_ pt: CGPoint) -> Bool {
+                        if isAttached && isAllowedAttachedPoint(pt) { return false }
+                        guard hit.rect.contains(pt) else { return false }
+                        // Re-check against the true (non-expanded) path via contains() helper.
+                        // contains() uses the original rect, so do a direct path check here.
+                        return hit.path?.contains(pt) == true
+                    }
+
+                    if pathContains(p) || pathContains(midp) || pathContains(q1) || pathContains(q3) {
+                        insideHits += 1
+                    }
+                }
+
+                prev = p
+            }
+
+            if insideHits > 0 {
+                // Crossing a shape is unacceptable.
+                score += Double(insideHits) * 500
+            }
+            if nearHits > 0 {
+                // Encourage routing around shapes, not just barely avoiding.
+                score += Double(nearHits) * 2
+            }
+
+            // Tie-breaker: prefer the side implied by the old rule.
+            let legacySign: CGFloat = (dx * dy >= 0) ? 1 : -1
+            let legacyControl = candidate(legacySign)
+            let ddx = control.x - legacyControl.x
+            let ddy = control.y - legacyControl.y
+            score += Double(ddx * ddx + ddy * ddy) * 0.00005
+
+            return score
+        }
+
+        // Search over bend magnitudes so we can route around intermediate shapes.
+        let base = magnitude
+        let factors: [CGFloat] = [1.0, 1.35, 1.85, 2.5, 3.3, 4.4]
+        let maxMagnitude = max(260, min(900, len * 1.2))
+        var best = candidate(1)
+        var bestScore = Double.greatestFiniteMagnitude
+
+        for f in factors {
+            let m = min(maxMagnitude, base * f)
+            func candWith(_ sign: CGFloat) -> CGPoint {
+                CGPoint(x: mid.x + perp.x * m * sign, y: mid.y + perp.y * m * sign)
+            }
+            let c1 = candWith(1)
+            let s1 = score(control: c1)
+            if s1 < bestScore {
+                bestScore = s1
+                best = c1
+            }
+            let c2 = candWith(-1)
+            let s2 = score(control: c2)
+            if s2 < bestScore {
+                bestScore = s2
+                best = c2
+            }
+        }
+
+        return best
     }
 
     private func approximateQuadraticBezier(start: CGPoint, control: CGPoint, end: CGPoint, steps: Int) -> [CGPoint] {

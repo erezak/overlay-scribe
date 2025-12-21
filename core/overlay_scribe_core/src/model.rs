@@ -78,6 +78,24 @@ pub struct Shape {
     pub start: Point,
     pub end: Point,
 
+    // Optional connector anchors for arrow-like shapes.
+    // When set, the corresponding endpoint should be resolved against the target shape.
+    #[serde(default)]
+    pub start_attach_id: Option<u64>,
+
+    #[serde(default)]
+    pub end_attach_id: Option<u64>,
+
+    // Shape-local attachment locations for arrow-like shapes.
+    // Interpreted as normalized UV in the target shape's axis-aligned rect:
+    // u,v in [0,1]. When present, this is used to resolve the exact boundary
+    // point the user dropped onto (instead of recomputing from the opposite end).
+    #[serde(default)]
+    pub start_attach_uv: Option<Point>,
+
+    #[serde(default)]
+    pub end_attach_uv: Option<Point>,
+
     #[serde(default)]
     pub text: String,
 
