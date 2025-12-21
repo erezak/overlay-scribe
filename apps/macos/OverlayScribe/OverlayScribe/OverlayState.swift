@@ -22,6 +22,7 @@ final class OverlayState: ObservableObject {
 
     @Published var overlayEnabled: Bool = true
     @Published var inkModeEnabled: Bool = false
+    @Published private(set) var optionKeyHeld: Bool = false
     // When true, the overlay is fully click-through to apps behind it.
     // When false, shapes can intercept clicks (for selection/text editing).
     @Published var clickthroughEnabled: Bool = false
@@ -51,6 +52,13 @@ final class OverlayState: ObservableObject {
     private let hotkeyManager = HotkeyManager()
     private let toolboxController = ToolboxPanelController()
 
+    private var optionFlagsMonitorGlobal: Any?
+    private var optionFlagsMonitorLocal: Any?
+
+    var effectiveInkModeEnabled: Bool {
+        inkModeEnabled && !optionKeyHeld
+    }
+
     init() {
         hotkeyManager.onToggleOverlay = { [weak self] in
             Task { @MainActor in self?.toggleOverlay() }
@@ -76,8 +84,50 @@ final class OverlayState: ObservableObject {
 
         hotkeyManager.start()
 
+        installOptionHoldMonitor()
+
         // Ensure the initial published values take effect immediately at launch.
         applyOverlayState()
+    }
+
+    deinit {
+        if let optionFlagsMonitorGlobal {
+            NSEvent.removeMonitor(optionFlagsMonitorGlobal)
+        }
+        if let optionFlagsMonitorLocal {
+            NSEvent.removeMonitor(optionFlagsMonitorLocal)
+        }
+    }
+
+    private func installOptionHoldMonitor() {
+        // Initialize based on current modifier flags.
+        optionKeyHeld = NSEvent.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .contains(.option)
+
+        func handleFlagsChanged(_ event: NSEvent) {
+            let held = event.modifierFlags
+                .intersection(.deviceIndependentFlagsMask)
+                .contains(.option)
+            guard held != optionKeyHeld else { return }
+            optionKeyHeld = held
+            applyOverlayState()
+        }
+
+        // Local monitor: works when this app is active.
+        optionFlagsMonitorLocal = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged]) { event in
+            Task { @MainActor in
+                handleFlagsChanged(event)
+            }
+            return event
+        }
+
+        // Global monitor: works when other apps are active (may require Input Monitoring permission).
+        optionFlagsMonitorGlobal = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged]) { event in
+            Task { @MainActor in
+                handleFlagsChanged(event)
+            }
+        }
     }
 
     func toggleOverlay() {
@@ -137,7 +187,7 @@ final class OverlayState: ObservableObject {
             windowManager.hideOverlays()
         }
 
-        windowManager.setInkModeEnabled(inkModeEnabled)
+        windowManager.setInkModeEnabled(effectiveInkModeEnabled)
         windowManager.setClickthroughEnabled(clickthroughEnabled)
         windowManager.setTool(selectedTool)
         windowManager.setPenWidth(penWidth)
@@ -251,13 +301,13 @@ private struct ToolboxView: View {
             HStack {
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(overlayState.inkModeEnabled ? Color.green : Color.secondary.opacity(0.4))
+                        .fill(overlayState.effectiveInkModeEnabled ? Color.green : Color.secondary.opacity(0.4))
                         .frame(width: 10, height: 10)
                     Text("Ink Mode")
                         .font(.system(size: 12, weight: .semibold))
-                    Text(overlayState.inkModeEnabled ? "ON" : "OFF")
+                    Text(overlayState.effectiveInkModeEnabled ? "ON" : "OFF")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(overlayState.inkModeEnabled ? .primary : .secondary)
+                        .foregroundStyle(overlayState.effectiveInkModeEnabled ? .primary : .secondary)
                 }
                 Spacer()
                 Toggle(isOn: $overlayState.inkModeEnabled) {

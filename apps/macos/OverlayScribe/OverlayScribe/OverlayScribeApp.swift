@@ -7,7 +7,7 @@ struct OverlayScribeApp: App {
     var body: some Scene {
         MenuBarExtra(
             "OverlayScribe",
-            systemImage: overlayState.inkModeEnabled ? "pencil.tip.crop.circle.fill" : "pencil.tip"
+            systemImage: overlayState.effectiveInkModeEnabled ? "pencil.tip.crop.circle.fill" : "pencil.tip"
         ) {
             StatusMenuView()
                 .environmentObject(overlayState)

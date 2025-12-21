@@ -82,6 +82,8 @@ Defaults (system-wide, via Carbon hotkeys):
 
 When the app is active: Escape exits ink mode.
 
+While Ink Mode is ON: hold Option (⌥) to temporarily disable Ink Mode until released.
+
 ## UniFFI Swift bindings
 
 Bindings can be generated locally (output is gitignored):
