@@ -1,6 +1,6 @@
 use overlay_scribe_core::{
-    ColorRgba8, Document, Item, Point, Shape, ShapeKind, ShapeStyle, Store, Stroke, TextAlignH,
-    TextAlignV,
+    ArrowPath, ArrowRender, ColorRgba8, Document, Item, Point, Shape, ShapeKind, ShapeStyle, Store,
+    Stroke, TextAlignH, TextAlignV,
 };
 use std::sync::Mutex;
 
@@ -266,6 +266,69 @@ impl From<Shape> for FfiShape {
 }
 
 #[derive(Debug, Clone, uniffi::Enum)]
+pub enum FfiArrowPathKind {
+    Line,
+    Quadratic,
+    Cubic,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiArrowPath {
+    pub kind: FfiArrowPathKind,
+    // For quadratic, c1 is the control point.
+    // For cubic, c1/c2 are control1/control2.
+    pub c1: Option<FfiPoint>,
+    pub c2: Option<FfiPoint>,
+}
+
+impl From<ArrowPath> for FfiArrowPath {
+    fn from(value: ArrowPath) -> Self {
+        match value {
+            ArrowPath::Line => Self {
+                kind: FfiArrowPathKind::Line,
+                c1: None,
+                c2: None,
+            },
+            ArrowPath::Quadratic { control } => Self {
+                kind: FfiArrowPathKind::Quadratic,
+                c1: Some(control.into()),
+                c2: None,
+            },
+            ArrowPath::Cubic { c1, c2 } => Self {
+                kind: FfiArrowPathKind::Cubic,
+                c1: Some(c1.into()),
+                c2: Some(c2.into()),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FfiArrowRender {
+    pub shape_id: u64,
+    pub style: FfiShapeStyle,
+    pub start: FfiPoint,
+    pub end: FfiPoint,
+    pub path: FfiArrowPath,
+    pub head_left: FfiPoint,
+    pub head_right: FfiPoint,
+}
+
+impl From<ArrowRender> for FfiArrowRender {
+    fn from(value: ArrowRender) -> Self {
+        Self {
+            shape_id: value.shape_id,
+            style: value.style.into(),
+            start: value.start.into(),
+            end: value.end.into(),
+            path: value.path.into(),
+            head_left: value.head_left.into(),
+            head_right: value.head_right.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, uniffi::Enum)]
 pub enum FfiItem {
     Stroke(FfiStroke),
     Shape(FfiShape),
@@ -316,6 +379,14 @@ impl CoreDocument {
             .items()
             .iter()
             .cloned()
+            .map(Into::into)
+            .collect()
+    }
+
+    pub fn arrow_renders(&self) -> Vec<FfiArrowRender> {
+        let store = self.store.lock().expect("mutex poisoned");
+        overlay_scribe_core::render::render_arrows(store.items())
+            .into_iter()
             .map(Into::into)
             .collect()
     }
